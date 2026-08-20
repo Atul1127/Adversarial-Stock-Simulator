@@ -1,1 +1,1 @@
-# Adversarial-Stock-Simulator
+# adversarial-stock-path-simulator
