@@ -1,69 +1,62 @@
-import pandas as pd
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 
 
-def load_stock_data(path):
-    """
-    Load historical stock data from a CSV file.
-    Expected columns: Date, Open, High, Low, Close, Volume
-    """
-    df = pd.read_csv(path)
+REQUIRED_COLUMNS = ["Date", "Open", "High", "Low", "Close", "Volume"]
 
-    if "Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"])
-        df = df.sort_values("Date")
-        df = df.set_index("Date")
 
-    required = ["Open", "High", "Low", "Close", "Volume"]
+def load_stock_data(path: str) -> pd.DataFrame:
+    path = Path(path)
 
-    missing = [col for col in required if col not in df.columns]
+    if not path.exists():
+        raise FileNotFoundError(f"Data file not found: {path}")
 
+    df = pd.read_csv(path, parse_dates=["Date"])
+
+    missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     if missing:
         raise ValueError(f"Missing columns: {missing}")
 
-    df = df[required].dropna()
+    df = df[REQUIRED_COLUMNS].copy()
+    df = df.drop_duplicates("Date").sort_values("Date")
+
+    numeric_columns = REQUIRED_COLUMNS[1:]
+    df[numeric_columns] = df[numeric_columns].apply(
+        pd.to_numeric, errors="coerce"
+    )
+
+    df = df.dropna().set_index("Date")
+
+    if (df[["Open", "High", "Low", "Close"]] <= 0).any().any():
+        raise ValueError("Invalid non-positive price values found.")
 
     return df
 
 
-def create_features(df):
-    """
-    Create basic financial features for the simulator.
-    """
-
+def create_features(df: pd.DataFrame) -> pd.DataFrame:
     data = df.copy()
 
-    data["Return"] = data["Close"].pct_change()
+    data["return"] = np.log(data["Close"]).diff()
+    data["volume_change"] = np.log(data["Volume"]).diff()
+    data["volatility_20"] = data["return"].rolling(20).std()
+    data["price_range"] = (data["High"] - data["Low"]) / data["Close"]
 
-    data["Log_Return"] = np.log(
-        data["Close"] / data["Close"].shift(1)
-    )
-
-    data["Volatility"] = (
-        data["Return"]
-        .rolling(window=20)
-        .std()
-    )
-
-    data["Volume_Change"] = (
-        data["Volume"].pct_change()
-    )
-
-    data = data.replace([np.inf, -np.inf], np.nan)
-    data = data.dropna()
-
-    return data
+    return data.replace([np.inf, -np.inf], np.nan).dropna()
 
 
-def train_test_split_time_series(df, train_ratio=0.8):
-    """
-    Time-aware train/test split.
-    No random shuffling to avoid data leakage.
-    """
+def train_test_split_time_series(
+    df: pd.DataFrame,
+    train_ratio: float = 0.8,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
 
-    split_index = int(len(df) * train_ratio)
+    if not 0 < train_ratio < 1:
+        raise ValueError("train_ratio must be between 0 and 1.")
 
-    train = df.iloc[:split_index].copy()
-    test = df.iloc[split_index:].copy()
+    split = int(len(df) * train_ratio)
 
-    return train, test
+    if split <= 0 or split >= len(df):
+        raise ValueError("Dataset is too small for this split.")
+
+    return df.iloc[:split].copy(), df.iloc[split:].copy()
