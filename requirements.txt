@@ -1,0 +1,7 @@
+numpy
+pandas
+scikit-learn
+yfinance
+torch
+gymnasium
+stable-baselines3

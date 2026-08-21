@@ -1,0 +1,24 @@
+data:
+  ticker: AAPL
+  period: 10y
+  sequence_length: 30
+  train_ratio: 0.8
+
+generator:
+  noise_dim: 16
+  hidden_dim: 64
+  epochs: 50
+  batch_size: 64
+  learning_rate: 0.0002
+
+environment:
+  initial_cash: 100000
+  transaction_cost: 0.001
+
+agent:
+  algorithm: PPO
+  learning_rate: 0.0003
+  total_timesteps: 50000
+
+evaluation:
+  confidence_level: 0.95
