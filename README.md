@@ -76,7 +76,7 @@ The continuous action represents portfolio exposure:
 +1.0  → Fully long
 ```
 
-The environment models transaction costs, position turnover, portfolio value, and return-based rewards.
+The environment models transaction costs, position turnover, portfolio value, and return-based rewards. The experiment uses chronological train/test separation and evaluates the trained agents on the held-out period.
 
 ### 4. Adversarial Stress Testing
 
@@ -84,21 +84,45 @@ The trained agents are evaluated under controlled market shocks:
 
 | Scenario | Description |
 | --- | --- |
-| Real | Historical market conditions |
-| Volatility | Elevated return volatility |
-| Drawdown | Sustained negative movement |
+| Real | Held-out historical market conditions |
+| Volatility | 3× return-volatility shock |
+| Drawdown | Controlled sustained negative shock |
 | Crash | Concentrated severe decline |
-| Correlation | Amplified market movement |
+| Correlation | 1.5× amplified market movement |
 
 ### 5. Experimental Comparison
 
 Three PPO training strategies are compared:
 
-1. **Real-only PPO** — trained on historical market data.
+1. **Real-only PPO** — trained on the 80% chronological real-data training split.
 2. **Synthetic-only PPO** — trained on generated market sequences.
-3. **Real + synthetic PPO** — trained on both data sources.
+3. **Real + synthetic PPO** — trained on the real training split plus synthetic sequences.
 
-Each model is evaluated across the same normal and adversarial scenarios to isolate the effect of synthetic training exposure.
+All three models are evaluated on the same unseen 20% real-data test period and its controlled stress scenarios.
+
+## Verified Out-of-Sample Results
+
+The following results were generated from the corrected pipeline using the held-out 20% AAPL test period. Metrics are shown as decimals in the experiment output; returns and drawdowns below are converted to percentages for readability.
+
+### Normal Test Period
+
+| Model | Return | Sharpe | Sortino | Max Drawdown |
+| --- | ---: | ---: | ---: | ---: |
+| Real PPO | **36.03%** | **0.542** | **0.708** | -33.43% |
+| Combined PPO | 3.43% | 0.153 | 0.136 | **-14.57%** |
+| Synthetic PPO | -4.21% | -0.406 | -0.384 | -9.26% |
+
+### Stress-Test Highlights
+
+| Model | Scenario | Return | Sharpe | Max Drawdown |
+| --- | --- | ---: | ---: | ---: |
+| Real PPO | Volatility | 152.22% | 0.543 | -70.50% |
+| Real PPO | Crash | 15.92% | 0.256 | -35.39% |
+| Combined PPO | Volatility | 1.70% | 0.013 | -64.79% |
+| Combined PPO | Crash | 11.65% | 0.490 | **-14.57%** |
+| Synthetic PPO | Crash | -1.36% | -0.128 | -9.26% |
+
+**Interpretation:** the real-only PPO produced the strongest normal-period return, while the combined model showed substantially lower crash drawdown at the cost of lower normal-period performance. Synthetic-only PPO underperformed on the held-out real market. These results support a robustness trade-off rather than a claim that synthetic augmentation universally improves returns.
 
 ## Evaluation Metrics
 
@@ -114,7 +138,7 @@ Each model is evaluated across the same normal and adversarial scenarios to isol
 - Value at Risk (VaR)
 - Conditional Value at Risk (CVaR)
 
-The final comparison is intended to answer not only **which strategy earns more**, but also **which strategy degrades less under stress**.
+The comparison is designed to measure both **performance** and **degradation under stress**, rather than relying on return alone.
 
 ## Project Structure
 
