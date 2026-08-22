@@ -1,182 +1,130 @@
 # Adversarial Stock Simulator
 
-An experimental machine learning system that combines **synthetic market generation, reinforcement learning, and adversarial stress testing** to evaluate trading-agent robustness under normal and extreme market conditions.
+An experimental machine learning system combining **LSTM-based synthetic market generation, reinforcement learning, and adversarial stress testing** to evaluate trading-agent robustness under normal and extreme market conditions.
 
-The project investigates whether exposing a PPO trading agent to synthetic and adversarial market scenarios can improve its robustness compared with training only on historical data.
+The core research question is whether exposing a PPO trading agent to synthetic and adversarial market scenarios improves robustness compared with training only on historical data.
+
+> **Research / portfolio project:** this repository is designed for reproducible experimentation, not live trading or investment advice.
 
 ## Architecture
 
 ```text
-                    Historical Market Data
-                            |
-                            v
-                    Data Processing
-                            |
-                 +----------+----------+
-                 |                     |
-                 v                     v
-          Real Market Data      LSTM Market Generator
-                                       |
-                                       v
-                                Synthetic Returns
-                                       |
-                         +-------------+-------------+
-                         |             |             |
-                         v             v             v
-                       Real       Synthetic      Combined
-                         |             |             |
-                         +-------------+-------------+
-                                       |
-                                       v
-                              PPO Trading Agent
-                                       |
-                                       v
-                            Adversarial Scenarios
-                                       |
-                                       v
-                         Risk & Performance Analysis
+Historical OHLCV Data
+        │
+        ▼
+  Data Validation
+        │
+        ▼
+ Feature Engineering
+        │
+        ├───────────────┐
+        ▼               ▼
+   Real Returns   LSTM Generator
+                        │
+                        ▼
+                 Synthetic Returns
+                        │
+             ┌──────────┼──────────┐
+             ▼          ▼          ▼
+           Real     Synthetic   Combined
+             └──────────┼──────────┘
+                        ▼
+                  PPO Trading Agent
+                        │
+                        ▼
+             Adversarial Stress Tests
+                        │
+                        ▼
+              Risk & Robustness Analysis
 ```
 
-## Key Features
+## What the System Does
 
-### Market Data Pipeline
+### 1. Market Data Pipeline
 
-Historical OHLCV data is downloaded using Yahoo Finance and processed through a time-series pipeline.
+Historical OHLCV data is downloaded with Yahoo Finance and transformed into model-ready time-series features:
 
-The pipeline includes:
+- Data validation and schema checks
+- Duplicate removal and chronological sorting
+- Missing-value handling
+- Log returns
+- Rolling volatility
+- Log volume change
+- Normalized intraday price range
+- Chronological train/test splitting
 
-* Data validation
-* Duplicate removal
-* Chronological sorting
-* Missing-value handling
-* Log-return calculation
-* Rolling volatility
-* Volume-change features
-* Price-range features
-* Chronological train/test splitting
+### 2. Synthetic Market Generation
 
-### Synthetic Market Generation
+An LSTM generator learns return-sequence structure from historical data while an LSTM discriminator distinguishes real and generated sequences.
 
-An **LSTM-based adversarial generator** learns patterns from historical market return sequences and generates synthetic return sequences from random noise.
+Synthetic sequences are validated using:
 
-The generative system contains:
+- Return distributions
+- Volatility
+- Tail behavior
+- Autocorrelation
 
-* LSTM Generator
-* LSTM Discriminator
-* Sequence construction
-* Normalization
-* Synthetic sequence generation
-* Statistical validation
+### 3. Reinforcement Learning
 
-Synthetic sequences are evaluated using:
+The trading environment uses **Gymnasium** and the agent uses **PPO** from Stable-Baselines3.
 
-* Return distribution
-* Volatility
-* Tail behavior
-* Autocorrelation
-
-### Reinforcement Learning
-
-The trading environment is implemented using **Gymnasium** and the trading agent uses **Proximal Policy Optimization (PPO)** through Stable-Baselines3.
-
-The agent controls portfolio exposure:
+The continuous action represents portfolio exposure:
 
 ```text
--1.0  → Fully Short
+-1.0  → Fully short
  0.0  → Neutral
-+1.0  → Fully Long
++1.0  → Fully long
 ```
 
-The environment includes:
+The environment models transaction costs, position turnover, portfolio value, and return-based rewards.
 
-* Continuous position sizing
-* Transaction costs
-* Portfolio tracking
-* Market-return rewards
-* Position turnover
+### 4. Adversarial Stress Testing
 
-### Adversarial Stress Testing
+The trained agents are evaluated under controlled market shocks:
 
-The trained agent is evaluated under controlled market shocks:
+| Scenario | Description |
+| --- | --- |
+| Real | Historical market conditions |
+| Volatility | Elevated return volatility |
+| Drawdown | Sustained negative movement |
+| Crash | Concentrated severe decline |
+| Correlation | Amplified market movement |
 
-| Scenario    | Description                        |
-| ----------- | ---------------------------------- |
-| Real        | Historical market conditions       |
-| Volatility  | Increased market volatility        |
-| Drawdown    | Sustained negative movement        |
-| Crash       | Concentrated severe market decline |
-| Correlation | Amplified market movements         |
+### 5. Experimental Comparison
 
-## Experiments
+Three PPO training strategies are compared:
 
-Three PPO training strategies are compared.
+1. **Real-only PPO** — trained on historical market data.
+2. **Synthetic-only PPO** — trained on generated market sequences.
+3. **Real + synthetic PPO** — trained on both data sources.
 
-### 1. Real-Only PPO
-
-```text
-Historical Data
-      ↓
-     PPO
-      ↓
-Stress Testing
-```
-
-### 2. Synthetic-Only PPO
-
-```text
-Historical Data
-      ↓
-Synthetic Generator
-      ↓
-Synthetic Data
-      ↓
-     PPO
-      ↓
-Stress Testing
-```
-
-### 3. Real + Synthetic PPO
-
-```text
-Historical Data ──────┐
-                      ├──→ PPO
-Synthetic Data ───────┘
-                      ↓
-               Stress Testing
-```
-
-The main research question is whether synthetic market exposure improves robustness under previously unseen stress conditions.
+Each model is evaluated across the same normal and adversarial scenarios to isolate the effect of synthetic training exposure.
 
 ## Evaluation Metrics
 
 ### Performance
 
-* Total Return
-* Sharpe Ratio
-* Sortino Ratio
+- Total Return
+- Sharpe Ratio
+- Sortino Ratio
 
 ### Risk
 
-* Maximum Drawdown
-* Value at Risk (VaR)
-* Conditional Value at Risk (CVaR)
+- Maximum Drawdown
+- Value at Risk (VaR)
+- Conditional Value at Risk (CVaR)
 
-The final experiment compares each PPO training strategy across normal and adversarial scenarios.
+The final comparison is intended to answer not only **which strategy earns more**, but also **which strategy degrades less under stress**.
 
 ## Project Structure
 
 ```text
 Adversarial-Stock-Simulator/
-│
 ├── configs/
 │   └── default.yaml
-│
 ├── experiments/
 │   ├── test_data_pipeline.py
 │   └── test_real_data.py
-│
-├── notebooks/
-│
 ├── src/
 │   ├── agent/
 │   │   ├── datasets.py
@@ -184,167 +132,160 @@ Adversarial-Stock-Simulator/
 │   │   ├── train.py
 │   │   ├── train_combined.py
 │   │   └── train_synthetic.py
-│   │
 │   ├── adversarial/
 │   │   └── scenarios.py
-│   │
 │   ├── data/
 │   │   ├── download.py
 │   │   └── loader.py
-│   │
 │   ├── environment/
 │   │   └── trading_env.py
-│   │
 │   ├── evaluation/
+│   │   ├── compare_models.py
 │   │   ├── metrics.py
-│   │   ├── robustness.py
-│   │   └── compare_models.py
-│   │
+│   │   └── robustness.py
 │   └── generator/
 │       ├── dataset.py
 │       ├── model.py
 │       ├── train.py
 │       └── validate.py
-│
 ├── tests/
 │   └── test_core.py
-│
 ├── .gitignore
-├── requirements.txt
-└── README.md
+├── README.md
+└── requirements.txt
 ```
 
-## Installation
-
-Clone the repository:
+## Setup
 
 ```bash
 git clone https://github.com/Atul1127/Adversarial-Stock-Simulator.git
 cd Adversarial-Stock-Simulator
+python -m venv .venv
+```
+
+Activate the environment:
+
+**Windows PowerShell**
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+**Windows CMD**
+
+```cmd
+.venv\Scripts\activate
+```
+
+**Linux / macOS**
+
+```bash
+source .venv/bin/activate
 ```
 
 Install dependencies:
 
 ```bash
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-For testing:
+## Run the Pipeline
 
-```bash
-pip install pytest
-```
-
-## Usage
-
-### 1. Download Market Data
+### 1. Download market data
 
 ```bash
 python -m src.data.download
 ```
 
-The default configuration downloads historical AAPL data.
+The default configuration downloads 10 years of AAPL data into `data/raw/`.
 
-### 2. Train the Market Generator
+### 2. Train the synthetic market generator
 
 ```bash
 python -m src.generator.train
 ```
 
-### 3. Validate Synthetic Data
+### 3. Validate generated sequences
 
 ```bash
 python -m src.generator.validate
 ```
 
-### 4. Train PPO on Real Data
+### 4. Train PPO variants
 
 ```bash
 python -m src.agent.train
-```
-
-### 5. Train PPO on Synthetic Data
-
-```bash
 python -m src.agent.train_synthetic
-```
-
-### 6. Train PPO on Real + Synthetic Data
-
-```bash
 python -m src.agent.train_combined
 ```
 
-### 7. Run Robustness Evaluation
+### 5. Evaluate robustness
 
 ```bash
 python -m src.evaluation.robustness
 ```
 
-### 8. Compare Training Strategies
+### 6. Compare all training strategies
 
 ```bash
 python -m src.evaluation.compare_models
 ```
 
-The final comparison is saved to:
-
-```text
-results/model_comparison.csv
-results/model_summary.csv
-```
+Generated comparison outputs are written to `results/` and are intentionally ignored by Git.
 
 ## Testing
 
-Run the core tests with:
+Run the automated tests with:
 
 ```bash
 pytest -q
 ```
 
-The test suite covers the core feature pipeline and Gymnasium trading environment.
+The test suite checks feature generation, numerical validity, environment behavior, action bounds, reset/step behavior, and invalid-input handling.
+
+## Configuration
+
+Core experiment settings are centralized in `configs/default.yaml`, including:
+
+- Asset and historical period
+- Sequence length and train split
+- Generator architecture and optimization settings
+- Trading capital and transaction costs
+- PPO training budget
+- Evaluation confidence level
+
+The current default experiment uses **AAPL**, a 30-step sequence length, an 80/20 chronological split, a 50,000-step PPO budget, and a 95% risk confidence level.
 
 ## Research Questions
 
-This project investigates:
-
-1. Can an adversarial generative model produce useful synthetic market return sequences?
+1. Can an adversarial generative model produce statistically useful market return sequences?
 2. How does PPO trained on synthetic data perform on real market conditions?
 3. Does combining real and synthetic data improve robustness?
-4. How sensitive are trading agents to volatility and crash scenarios?
-5. Do risk metrics reveal weaknesses that total return alone cannot capture?
+4. How sensitive are trading agents to volatility, drawdown, and crash scenarios?
+5. Do risk metrics reveal weaknesses hidden by total return alone?
 
 ## Limitations
 
 This is an experimental research and portfolio project rather than a production trading platform.
 
-Current limitations include:
-
-* Single-asset experiments
-* Simplified market microstructure
-* Synthetic return generation rather than full OHLCV generation
-* Controlled rather than learned adversarial attacks
-* No live trading
-* No execution infrastructure
-* Limited historical universe
-
-These limitations intentionally keep the project focused and the experiments interpretable.
+- Single-asset experiments
+- Simplified market microstructure
+- Synthetic returns rather than full OHLCV generation
+- Controlled adversarial scenarios rather than learned attacks
+- No live trading or execution infrastructure
+- Limited historical universe
 
 ## Future Work
 
-Potential extensions include:
-
-* Multi-asset market generation
-* More advanced time-series generative models
-* Learned adversarial policies
-* Regime-conditioned generation
-* Portfolio-level reinforcement learning
-* Walk-forward evaluation
-* Hyperparameter optimization
-* More realistic transaction models
+- Multi-asset market generation
+- Regime-conditioned generative models
+- Learned adversarial policies
+- Portfolio-level reinforcement learning
+- Walk-forward evaluation
+- Hyperparameter optimization
+- More realistic transaction and slippage models
 
 ## Disclaimer
 
-This project is for **educational and research purposes only**.
-
-It is not financial advice and should not be used as the sole basis for real-world investment decisions.
+This project is for **educational and research purposes only**. It is not financial advice and should not be used as the sole basis for real-world investment decisions.
