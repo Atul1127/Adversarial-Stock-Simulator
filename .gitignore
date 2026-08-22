@@ -8,10 +8,8 @@ __pycache__/
 venv/
 env/
 
-# Jupyter
+# Jupyter / IDE
 .ipynb_checkpoints/
-
-# IDE
 .vscode/
 .idea/
 
@@ -19,18 +17,18 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data
+# Local data and generated artifacts
 data/raw/*
 data/processed/*
-
-# Trained models
 models/*.pt
 models/*.pth
 models/*.zip
-
-# Generated results
 results/*.csv
 results/*.png
+
+# Runtime / logs
+*.log
+.pytest_cache/
 
 # Secrets
 .env
