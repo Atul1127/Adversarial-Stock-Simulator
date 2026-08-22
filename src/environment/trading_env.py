@@ -7,9 +7,9 @@ from gymnasium import spaces
 class TradingEnv(gym.Env):
     """Single-asset trading environment with continuous long/short exposure.
 
-    The action chosen from observation t is applied to the return from t to
-    t+1. This prevents look-ahead leakage from exposing the current return
-    before the agent commits to its position.
+    The action selected from observation t is applied to the return realized
+    from t to t+1. Portfolio wealth uses simple returns, preventing artificial
+    exponential amplification from repeatedly exponentiating log returns.
 
     Action:
         -1.0 = fully short
@@ -85,17 +85,19 @@ class TradingEnv(gym.Env):
         previous_position = self.position
         self.position = target_position
 
-        # The action selected using information available at t is exposed to
-        # the market return realized over t -> t+1.
-        market_return = float(self.data.iloc[self.current_step + 1]["return"])
-        position_return = self.position * market_return
+        # The log-return feature is converted back to a simple return for
+        # portfolio accounting. The action at t is applied to t -> t+1.
+        log_return = float(self.data.iloc[self.current_step + 1]["return"])
+        market_return = float(np.expm1(log_return))
         turnover = abs(self.position - previous_position)
         trading_cost = turnover * self.transaction_cost
-        reward = position_return - trading_cost
 
-        self.portfolio_value *= np.exp(reward)
+        portfolio_return = self.position * market_return - trading_cost
+        portfolio_return = max(portfolio_return, -0.999)
+        reward = float(np.log1p(portfolio_return))
+        self.portfolio_value *= 1.0 + portfolio_return
+
         self.current_step += 1
-
         terminated = self.current_step >= len(self.data) - 1
         truncated = False
         observation = (
@@ -111,4 +113,4 @@ class TradingEnv(gym.Env):
             "trading_cost": trading_cost,
         }
 
-        return observation, float(reward), terminated, truncated, info
+        return observation, reward, terminated, truncated, info
