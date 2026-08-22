@@ -5,5 +5,4 @@ yfinance
 torch
 gymnasium
 stable-baselines3
-PyYAML
 pytest
