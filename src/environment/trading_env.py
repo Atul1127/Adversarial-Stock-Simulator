@@ -7,6 +7,10 @@ from gymnasium import spaces
 class TradingEnv(gym.Env):
     """Single-asset trading environment with continuous long/short exposure.
 
+    The action chosen from observation t is applied to the return from t to
+    t+1. This prevents look-ahead leakage from exposing the current return
+    before the agent commits to its position.
+
     Action:
         -1.0 = fully short
          0.0 = neutral
@@ -81,7 +85,9 @@ class TradingEnv(gym.Env):
         previous_position = self.position
         self.position = target_position
 
-        market_return = float(self.data.iloc[self.current_step]["return"])
+        # The action selected using information available at t is exposed to
+        # the market return realized over t -> t+1.
+        market_return = float(self.data.iloc[self.current_step + 1]["return"])
         position_return = self.position * market_return
         turnover = abs(self.position - previous_position)
         trading_cost = turnover * self.transaction_cost
