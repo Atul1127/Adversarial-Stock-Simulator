@@ -7,6 +7,7 @@ from src.adversarial.scenarios import (
     market_crash,
 )
 from src.data.loader import create_features
+from src.environment.episode_env import RandomEpisodeEnv, make_rolling_episodes
 from src.environment.trading_env import TradingEnv
 from src.evaluation.benchmarks import evaluate_buy_and_hold
 from src.evaluation.metrics import sortino_ratio
@@ -151,3 +152,33 @@ def test_buy_and_hold_uses_same_realized_period_count_as_trading_env():
     expected_return = np.prod(1.0 + realized_returns) - 1.0
 
     assert np.isclose(result["return"], expected_return)
+
+
+def test_random_episode_env_samples_valid_episodes():
+    df = create_features(sample_data())
+    episodes = make_rolling_episodes(df, episode_length=15, stride=5)
+
+    assert len(episodes) > 1
+    env = RandomEpisodeEnv(episodes)
+    observation, _ = env.reset(seed=42)
+    assert observation.shape == env.observation_space.shape
+
+    for _ in range(14):
+        observation, reward, terminated, truncated, info = env.step(
+            np.array([0.0], dtype=np.float32)
+        )
+        assert np.isfinite(reward)
+        assert not truncated
+
+    assert terminated
+
+
+def test_random_episode_env_honors_sampling_weights():
+    df = create_features(sample_data())
+    episodes = make_rolling_episodes(df, episode_length=10, stride=10)[:2]
+    env = RandomEpisodeEnv(episodes, weights=[1.0, 0.0])
+
+    observation, _ = env.reset(seed=123)
+    assert observation.shape == env.observation_space.shape
+    assert env._env is not None
+    assert len(env._env.data) == 10
