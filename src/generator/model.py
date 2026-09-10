@@ -34,7 +34,7 @@ class Generator(nn.Module):
         self.mean_head = nn.Linear(hidden_dim, output_dim)
         self.scale_head = nn.Linear(hidden_dim, output_dim)
 
-    def step(self, current_state, noise, hidden=None):
+    def step(self, current_state, noise, hidden=None, sample_generator=None):
         """Predict and sample the next normalized market state."""
         if current_state.ndim == 2:
             current_state = current_state.unsqueeze(1)
@@ -48,12 +48,22 @@ class Generator(nn.Module):
         scale = F.softplus(self.scale_head(hidden_output)) + self.min_scale
         scale = torch.clamp(scale, max=self.max_scale)
 
-        sample = mean + scale * torch.randn_like(mean)
+        if sample_generator is None:
+            sample_noise = torch.randn_like(mean)
+        else:
+            sample_noise = torch.randn(
+                mean.shape,
+                dtype=mean.dtype,
+                device=mean.device,
+                generator=sample_generator,
+            )
+
+        sample = mean + scale * sample_noise
         sample = torch.clamp(sample, -4.0, 4.0)
         return sample, mean, scale, hidden
 
-    def forward(self, current_state, noise, hidden=None):
-        return self.step(current_state, noise, hidden)
+    def forward(self, current_state, noise, hidden=None, sample_generator=None):
+        return self.step(current_state, noise, hidden, sample_generator)
 
 
 class Discriminator(nn.Module):
