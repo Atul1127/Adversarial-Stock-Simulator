@@ -1,38 +1,48 @@
 from pathlib import Path
 
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.env_checker import check_env
 
 from src.data.loader import (
     load_stock_data,
     create_features,
     train_test_split_time_series,
 )
-from src.agent.datasets import generate_synthetic_dataframe
-from src.environment.trading_env import TradingEnv
+from src.agent.datasets import generate_synthetic_episodes
+from src.environment.episode_env import RandomEpisodeEnv, make_rolling_episodes
 
 
 DATA_PATH = "data/raw/AAPL.csv"
 MODEL_PATH = "models/ppo_combined"
 SEED = 42
+EPISODE_LENGTH = 30
+NUM_SYNTHETIC_EPISODES = 512
 
 
 def main():
     real = create_features(load_stock_data(DATA_PATH))
     train_real, _ = train_test_split_time_series(real, train_ratio=0.8)
+    real_episodes = make_rolling_episodes(
+        train_real,
+        episode_length=EPISODE_LENGTH,
+    )
+    synthetic_episodes = generate_synthetic_episodes(
+        num_episodes=NUM_SYNTHETIC_EPISODES,
+        seed=SEED,
+    )
 
-    synthetic = generate_synthetic_dataframe(seed=SEED)
+    # Sample 50% of episodes from real training windows and 50% from generated
+    # windows. No transition exists between unrelated trajectories.
+    episodes = real_episodes + synthetic_episodes
+    real_weight = 0.5 / len(real_episodes)
+    synthetic_weight = 0.5 / len(synthetic_episodes)
+    weights = (
+        [real_weight] * len(real_episodes)
+        + [synthetic_weight] * len(synthetic_episodes)
+    )
 
-    # Each source is a separate environment. PPO samples both environments in
-    # parallel, so no artificial real->synthetic transition exists inside an
-    # episode and both sources contribute equally to the rollout buffer.
-    def make_real_env():
-        return TradingEnv(train_real)
-
-    def make_synthetic_env():
-        return TradingEnv(synthetic)
-
-    env = DummyVecEnv([make_real_env, make_synthetic_env])
+    env = RandomEpisodeEnv(episodes, weights=weights)
+    check_env(env, warn=True)
 
     model = PPO(
         "MlpPolicy",
