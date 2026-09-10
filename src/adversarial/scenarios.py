@@ -34,7 +34,7 @@ def volatility_shock(
     df: pd.DataFrame,
     multiplier: float = 3.0,
 ) -> pd.DataFrame:
-    """Increase dispersion around the existing return mean."""
+    """Increase return dispersion without changing the sample mean."""
     if multiplier <= 0:
         raise ValueError("multiplier must be positive.")
 
@@ -53,7 +53,7 @@ def drawdown_shock(
     duration: int = 20,
     start_fraction: float = 0.25,
 ) -> pd.DataFrame:
-    """Inject a 10% cumulative market loss over a sustained mid-path window."""
+    """Inject a controlled cumulative loss over a sustained mid-path window."""
     data = df.copy()
     _require_returns(data)
 
@@ -75,7 +75,7 @@ def market_crash(
     duration: int = 5,
     start_fraction: float = 0.50,
 ) -> pd.DataFrame:
-    """Inject a 20% cumulative market loss over a short mid-path window."""
+    """Inject a concentrated cumulative loss over a short mid-path window."""
     data = df.copy()
     _require_returns(data)
 
@@ -91,34 +91,12 @@ def market_crash(
     return data
 
 
-def market_amplification(
-    df: pd.DataFrame,
-    multiplier: float = 1.5,
-) -> pd.DataFrame:
-    """Amplify market-return deviations for the single-asset experiment.
-
-    A true correlation shock requires multiple assets, so the current
-    experiment explicitly calls this market-movement amplification.
-    """
-    if multiplier <= 0:
-        raise ValueError("multiplier must be positive.")
-
-    data = df.copy()
-    _require_returns(data)
-
-    returns = data["return"].to_numpy(dtype=np.float64)
-    mean_return = returns.mean()
-    data["return"] = mean_return + multiplier * (returns - mean_return)
-    return data
-
-
 def generate_adversarial_scenarios(
     df: pd.DataFrame,
 ) -> dict[str, pd.DataFrame]:
-    """Generate controlled stress-test scenarios for the current single asset."""
+    """Generate the three core single-asset stress scenarios."""
     return {
         "volatility": volatility_shock(df),
         "drawdown": drawdown_shock(df),
         "crash": market_crash(df),
-        "market_amplification": market_amplification(df),
     }
