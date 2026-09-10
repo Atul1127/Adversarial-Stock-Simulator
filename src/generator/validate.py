@@ -10,6 +10,9 @@ from src.generator.dataset import denormalize_sequences
 from src.generator.model import Generator
 
 
+FEATURE_COLUMNS = ["return", "volume_change", "price_range"]
+
+
 def autocorrelation(x: np.ndarray, lag: int = 1) -> float:
     x = np.asarray(x, dtype=np.float64)
     if len(x) <= lag or np.std(x[:-lag]) == 0 or np.std(x[lag:]) == 0:
@@ -24,9 +27,13 @@ def main():
         weights_only=False,
     )
 
+    feature_columns = checkpoint.get("feature_columns", FEATURE_COLUMNS)
+    feature_dim = checkpoint.get("output_dim", len(feature_columns))
+
     model = Generator(
         checkpoint["noise_dim"],
         checkpoint["hidden_dim"],
+        feature_dim,
     )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
@@ -37,16 +44,16 @@ def main():
         train_ratio=checkpoint.get("train_ratio", 0.8),
     )
 
-    # Validate against the same chronological training distribution used to
-    # fit the generator. The held-out period is not used for tuning or checks.
-    real = train_df["return"].to_numpy(dtype=np.float64)
-
-    sequence_length = checkpoint["sequence_length"]
+    real = train_df[feature_columns].to_numpy(dtype=np.float64)
     total_steps = len(real)
+
+    rng = torch.Generator(device="cpu")
+    rng.manual_seed(checkpoint.get("seed", 42))
     noise = torch.randn(
         1,
         total_steps,
         checkpoint["noise_dim"],
+        generator=rng,
     )
 
     with torch.no_grad():
@@ -54,52 +61,44 @@ def main():
 
     synthetic = denormalize_sequences(
         synthetic,
-        checkpoint["mean"],
-        checkpoint["std"],
+        np.asarray(checkpoint["mean"]),
+        np.asarray(checkpoint["std"]),
     ).astype(np.float64)
 
-    print("=" * 65)
+    print("=" * 70)
     print("MARKET GENERATOR VALIDATION — TRAIN DISTRIBUTION")
-    print("=" * 65)
+    print("=" * 70)
 
-    print("\nReturn statistics")
-    print(f"Real mean:             {real.mean():.6f}")
-    print(f"Synthetic mean:        {synthetic.mean():.6f}")
-    print(f"Real volatility:       {real.std():.6f}")
-    print(f"Synthetic volatility:  {synthetic.std():.6f}")
+    for idx, feature in enumerate(feature_columns):
+        real_feature = real[:, idx]
+        synthetic_feature = synthetic[:, idx]
+        print(f"\n{feature}")
+        print(f"  Real mean/std:       {real_feature.mean(): .6f} / {real_feature.std(): .6f}")
+        print(f"  Synthetic mean/std:  {synthetic_feature.mean(): .6f} / {synthetic_feature.std(): .6f}")
+        for quantile in (0.01, 0.05, 0.95, 0.99):
+            print(
+                f"  Q{quantile:.0%}: real {np.quantile(real_feature, quantile): .6f} | "
+                f"synthetic {np.quantile(synthetic_feature, quantile): .6f}"
+            )
 
-    print("\nTail behavior")
-    for quantile in (0.01, 0.05, 0.95, 0.99):
-        print(
-            f"Q{quantile:.0%} real:       {np.quantile(real, quantile): .6f} | "
-            f"synthetic: {np.quantile(synthetic, quantile): .6f}"
-        )
+    real_returns = real[:, feature_columns.index("return")]
+    synthetic_returns = synthetic[:, feature_columns.index("return")]
+    print("\nReturn serial dependence")
+    print(f"  Real lag-1:       {autocorrelation(real_returns): .6f}")
+    print(f"  Synthetic lag-1:  {autocorrelation(synthetic_returns): .6f}")
+    print(f"  Real lag-5:       {autocorrelation(real_returns, 5): .6f}")
+    print(f"  Synthetic lag-5:  {autocorrelation(synthetic_returns, 5): .6f}")
 
-    print("\nSerial dependence")
-    print(f"Real lag-1 autocorrelation:       {autocorrelation(real):.6f}")
-    print(f"Synthetic lag-1 autocorrelation:  {autocorrelation(synthetic):.6f}")
-    print(f"Real lag-5 autocorrelation:       {autocorrelation(real, 5):.6f}")
-    print(f"Synthetic lag-5 autocorrelation:  {autocorrelation(synthetic, 5):.6f}")
-
+    real_threshold = np.quantile(np.abs(real_returns), 0.95)
     print("\nExtreme-return frequency")
-    real_threshold = np.quantile(np.abs(real), 0.95)
-    synthetic_threshold = np.quantile(np.abs(synthetic), 0.95)
     print(
-        f"Real |return| > real 95th percentile: "
-        f"{np.mean(np.abs(real) > real_threshold):.2%}"
-    )
-    print(
-        f"Synthetic |return| > real 95th percentile: "
-        f"{np.mean(np.abs(synthetic) > real_threshold):.2%}"
-    )
-    print(
-        f"Synthetic |return| > synthetic 95th percentile: "
-        f"{np.mean(np.abs(synthetic) > synthetic_threshold):.2%}"
+        "  Synthetic |return| above real 95th percentile: "
+        f"{np.mean(np.abs(synthetic_returns) > real_threshold):.2%}"
     )
 
     print(f"\nValidated continuous trajectory length: {len(synthetic):,}")
-    print(f"Generator sequence length: {sequence_length}")
-    print("\nValidation completed without using the held-out test period.")
+    print(f"Generated features: {', '.join(feature_columns)}")
+    print("Validation completed without using the held-out test period.")
 
 
 if __name__ == "__main__":
