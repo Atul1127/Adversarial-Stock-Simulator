@@ -15,6 +15,7 @@ from src.generator.model import Discriminator, Generator
 
 SEED = 42
 FEATURE_COLUMNS = ["return", "volume_change", "price_range"]
+MODEL_TRANSFORMS = {"price_range": "log1p"}
 
 
 def train(
@@ -36,8 +37,14 @@ def train(
     df = create_features(load_stock_data(data_path))
     train_df, _ = train_test_split_time_series(df, train_ratio=train_ratio)
 
+    generator_data = train_df[FEATURE_COLUMNS].copy()
+    # Price range is strictly nonnegative; modeling log1p(range) keeps the
+    # generator unconstrained in normalized space while guaranteeing valid
+    # values after inverse transformation.
+    generator_data["price_range"] = np.log1p(generator_data["price_range"])
+
     sequences = create_sequences(
-        train_df,
+        generator_data,
         sequence_length=sequence_length,
         feature_columns=FEATURE_COLUMNS,
     )
@@ -110,6 +117,7 @@ def train(
             "sequence_length": sequence_length,
             "output_dim": feature_dim,
             "feature_columns": FEATURE_COLUMNS,
+            "transforms": MODEL_TRANSFORMS,
             "mean": mean,
             "std": std,
             "train_ratio": train_ratio,
