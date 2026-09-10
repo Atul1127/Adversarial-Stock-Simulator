@@ -8,19 +8,21 @@ from src.data.loader import (
     create_features,
     train_test_split_time_series,
 )
-from src.environment.trading_env import TradingEnv
+from src.environment.episode_env import RandomEpisodeEnv, make_rolling_episodes
 
 
 DATA_PATH = "data/raw/AAPL.csv"
 MODEL_PATH = "models/ppo_real"
 SEED = 42
+EPISODE_LENGTH = 30
 
 
 def main():
     df = create_features(load_stock_data(DATA_PATH))
     train_df, _ = train_test_split_time_series(df, train_ratio=0.8)
+    episodes = make_rolling_episodes(train_df, episode_length=EPISODE_LENGTH)
 
-    env = TradingEnv(train_df)
+    env = RandomEpisodeEnv(episodes)
     check_env(env, warn=True)
 
     model = PPO(
@@ -41,7 +43,7 @@ def main():
     Path("models").mkdir(exist_ok=True)
     model.save(MODEL_PATH)
 
-    print(f"\nPPO model saved to {MODEL_PATH}.")
+    print(f"\nReal PPO saved to {MODEL_PATH}.")
 
 
 if __name__ == "__main__":
