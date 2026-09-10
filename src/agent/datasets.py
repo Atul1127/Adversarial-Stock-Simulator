@@ -5,21 +5,32 @@ import torch
 from src.generator.dataset import denormalize_sequences
 from src.generator.model import Generator
 
+REQUIRED_SYNTHETIC_FEATURES = ["return", "volume_change", "price_range"]
+
 
 def generate_synthetic_dataframe(
     checkpoint_path="models/market_generator.pt",
     num_sequences=1000,
     seed=42,
 ):
-    """Generate one continuous synthetic trajectory with return and activity features."""
+    """Generate one reproducible continuous multivariate market trajectory."""
     checkpoint = torch.load(
         checkpoint_path,
         map_location="cpu",
         weights_only=False,
     )
 
-    feature_columns = checkpoint["feature_columns"]
+    feature_columns = checkpoint.get("feature_columns")
+    if feature_columns != REQUIRED_SYNTHETIC_FEATURES:
+        raise ValueError(
+            "Incompatible generator checkpoint. Retrain the generator with "
+            "`python -m src.generator.train` before training PPO."
+        )
+
     feature_dim = checkpoint.get("output_dim", len(feature_columns))
+    if feature_dim != len(feature_columns):
+        raise ValueError("Generator checkpoint feature dimension is inconsistent.")
+
     model = Generator(
         checkpoint["noise_dim"],
         checkpoint["hidden_dim"],
@@ -61,7 +72,6 @@ def generate_synthetic_dataframe(
         .fillna(0.0)
     )
 
-    # Preserve the environment's expected column order.
     return synthetic_df[
         ["return", "volume_change", "volatility_20", "price_range"]
     ].reset_index(drop=True)
