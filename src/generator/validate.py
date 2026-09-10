@@ -11,6 +11,7 @@ from src.generator.model import Generator
 
 
 FEATURE_COLUMNS = ["return", "volume_change", "price_range"]
+EXPECTED_TRANSFORMS = {"price_range": "log1p"}
 
 
 def autocorrelation(x: np.ndarray, lag: int = 1) -> float:
@@ -34,6 +35,12 @@ def main():
             "`python -m src.generator.train`."
         )
 
+    if checkpoint.get("transforms") != EXPECTED_TRANSFORMS:
+        raise ValueError(
+            "Incompatible generator transform metadata. Retrain with "
+            "`python -m src.generator.train`."
+        )
+
     feature_dim = checkpoint.get("output_dim")
     if feature_dim != len(feature_columns):
         raise ValueError("Generator checkpoint feature dimension is inconsistent.")
@@ -53,8 +60,11 @@ def main():
     )
 
     real = train_df[feature_columns].to_numpy(dtype=np.float64)
-    total_steps = len(real)
+    real_model_space = real.copy()
+    price_idx = feature_columns.index("price_range")
+    real_model_space[:, price_idx] = np.log1p(real_model_space[:, price_idx])
 
+    total_steps = len(real_model_space)
     rng = torch.Generator(device="cpu")
     rng.manual_seed(checkpoint.get("seed", 42))
     noise = torch.randn(
@@ -72,6 +82,8 @@ def main():
         np.asarray(checkpoint["mean"]),
         np.asarray(checkpoint["std"]),
     ).astype(np.float64)
+    synthetic[:, price_idx] = np.expm1(synthetic[:, price_idx])
+    synthetic[:, price_idx] = np.clip(synthetic[:, price_idx], 0.0, None)
 
     print("=" * 70)
     print("MARKET GENERATOR VALIDATION — TRAIN DISTRIBUTION")
