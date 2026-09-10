@@ -9,6 +9,7 @@ from src.data.loader import (
     train_test_split_time_series,
 )
 from src.adversarial.scenarios import generate_adversarial_scenarios
+from src.evaluation.benchmarks import evaluate_buy_and_hold
 from src.evaluation.robustness import evaluate
 
 
@@ -33,6 +34,14 @@ def main():
     }
 
     results = []
+
+    for scenario_name, scenario_data in scenarios.items():
+        benchmark = evaluate_buy_and_hold(scenario_data)
+        results.append({
+            "model": "buy_and_hold",
+            "scenario": scenario_name,
+            **benchmark,
+        })
 
     for model_name, model_path in models.items():
         print(f"\nEvaluating {model_name}...")
