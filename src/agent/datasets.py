@@ -11,24 +11,20 @@ def generate_synthetic_dataframe(
     num_sequences=1000,
     seed=42,
 ):
-    """Generate one reproducible continuous synthetic market trajectory.
-
-    ``num_sequences`` controls the approximate trajectory length using the
-    generator's trained sequence length. A single LSTM rollout is used rather
-    than flattening independently generated sequences, which would create
-    artificial transitions between unrelated samples.
-    """
+    """Generate one continuous synthetic trajectory with return and activity features."""
     checkpoint = torch.load(
         checkpoint_path,
         map_location="cpu",
         weights_only=False,
     )
 
+    feature_columns = checkpoint["feature_columns"]
+    feature_dim = checkpoint.get("output_dim", len(feature_columns))
     model = Generator(
         checkpoint["noise_dim"],
         checkpoint["hidden_dim"],
+        feature_dim,
     )
-
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
@@ -47,31 +43,25 @@ def generate_synthetic_dataframe(
     with torch.no_grad():
         synthetic = model(noise).squeeze(0).numpy()
 
-    returns = denormalize_sequences(
+    synthetic = denormalize_sequences(
         synthetic,
-        checkpoint["mean"],
-        checkpoint["std"],
+        np.asarray(checkpoint["mean"]),
+        np.asarray(checkpoint["std"]),
     )
 
-    rolling_volatility = (
-        pd.Series(returns)
+    synthetic_df = pd.DataFrame(
+        synthetic,
+        columns=feature_columns,
+    )
+
+    synthetic_df["volatility_20"] = (
+        synthetic_df["return"]
         .rolling(20, min_periods=1)
         .std()
         .fillna(0.0)
-        .to_numpy()
     )
 
-    # The current generator models returns only. The remaining observations
-    # are deterministic return-derived proxies so real and synthetic episodes
-    # remain structurally comparable without pretending to generate OHLCV.
-    activity_proxy = np.log1p(np.abs(returns))
-    price_range_proxy = np.abs(returns)
-
-    return pd.DataFrame(
-        {
-            "return": returns,
-            "volume_change": activity_proxy,
-            "volatility_20": rolling_volatility,
-            "price_range": price_range_proxy,
-        }
-    )
+    # Preserve the environment's expected column order.
+    return synthetic_df[
+        ["return", "volume_change", "volatility_20", "price_range"]
+    ].reset_index(drop=True)
