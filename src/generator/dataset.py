@@ -1,50 +1,55 @@
 import numpy as np
 import pandas as pd
 
+DEFAULT_FEATURES = ["return"]
+
 
 def create_sequences(
     df: pd.DataFrame,
     sequence_length: int = 30,
+    feature_columns: list[str] | None = None,
 ) -> np.ndarray:
-    """Create rolling return sequences for generative modeling."""
+    """Create rolling multivariate sequences for generative modeling."""
+    feature_columns = feature_columns or DEFAULT_FEATURES
+    missing = [column for column in feature_columns if column not in df.columns]
+    if missing:
+        raise ValueError(f"Missing sequence features: {missing}")
+    if sequence_length <= 0:
+        raise ValueError("sequence_length must be positive.")
 
-    if "return" not in df.columns:
-        raise ValueError("DataFrame must contain a 'return' column.")
+    values = df[feature_columns].dropna().to_numpy(dtype=np.float32)
 
-    returns = df["return"].dropna().to_numpy(dtype=np.float32)
-
-    if len(returns) <= sequence_length:
+    if len(values) <= sequence_length:
         raise ValueError("Not enough observations for requested sequence length.")
 
-    sequences = []
-
-    for i in range(len(returns) - sequence_length + 1):
-        sequences.append(returns[i:i + sequence_length])
-
-    return np.asarray(sequences, dtype=np.float32)
+    return np.asarray(
+        [values[i : i + sequence_length] for i in range(len(values) - sequence_length + 1)],
+        dtype=np.float32,
+    )
 
 
 def normalize_sequences(
     sequences: np.ndarray,
-) -> tuple[np.ndarray, float, float]:
-    """Normalize return sequences for stable model training."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Normalize each generated feature independently."""
+    sequences = np.asarray(sequences, dtype=np.float32)
+    if sequences.ndim != 3:
+        raise ValueError("sequences must have shape (samples, timesteps, features).")
 
-    mean = float(sequences.mean())
-    std = float(sequences.std())
+    mean = sequences.mean(axis=(0, 1)).astype(np.float32)
+    std = sequences.std(axis=(0, 1)).astype(np.float32)
 
-    if std == 0:
-        raise ValueError("Cannot normalize zero-variance sequences.")
+    if np.any(std == 0):
+        raise ValueError("Cannot normalize zero-variance sequence features.")
 
     normalized = (sequences - mean) / std
-
     return normalized.astype(np.float32), mean, std
 
 
 def denormalize_sequences(
     sequences: np.ndarray,
-    mean: float,
-    std: float,
+    mean: np.ndarray | float,
+    std: np.ndarray | float,
 ) -> np.ndarray:
-    """Convert normalized sequences back to returns."""
-
-    return sequences * std + mean
+    """Convert normalized multivariate sequences back to feature units."""
+    return np.asarray(sequences) * np.asarray(std) + np.asarray(mean)
