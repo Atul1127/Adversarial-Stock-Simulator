@@ -1,8 +1,8 @@
 # Adversarial Stock Simulator
 
-An experimental machine learning system combining **LSTM-based synthetic market generation, reinforcement learning, and adversarial stress testing** to evaluate trading-agent robustness under normal and extreme market conditions.
+An experimental machine learning system combining **LSTM-based synthetic market generation, reinforcement learning, and adversarial stress testing** to study how synthetic market experience affects trading-agent performance and robustness.
 
-The core research question is whether exposing a PPO trading agent to synthetic and adversarial market scenarios improves robustness compared with training only on historical data.
+The core research question is whether exposing a PPO trading agent to statistically validated synthetic market episodes improves risk-adjusted performance or robustness compared with training only on historical data.
 
 > **Research / portfolio project:** this repository is designed for reproducible experimentation, not live trading or investment advice.
 
@@ -17,33 +17,38 @@ Historical OHLCV Data
         ▼
  Feature Engineering
         │
-        ├───────────────┐
-        ▼               ▼
-   Real Features   LSTM Generator
-                        │
-                        ▼
-             Synthetic Market Features
-                        │
-             ┌──────────┴──────────┐
-             ▼                     ▼
-       Synthetic PPO        Real + Synthetic PPO
-             │                     │
-             └──────────┬──────────┘
-                        ▼
-                  Out-of-Sample Test
-                        │
-                        ▼
-             Adversarial Stress Tests
-                        │
-                        ▼
-              Risk & Robustness Analysis
+        ├──────────────────┐
+        ▼                  ▼
+ Real Training Windows   LSTM Generator
+        │                  │
+        │                  ▼
+        │            Synthetic 30-step
+        │                Episodes
+        │                  │
+        └────────┬─────────┘
+                 ▼
+        PPO Episode Sampler
+                 │
+       ┌─────────┼─────────┐
+       ▼         ▼         ▼
+    Real PPO  Synthetic  Combined
+                 PPO        PPO
+       └─────────┬─────────┘
+                 ▼
+          Held-out Test Period
+                 │
+                 ▼
+       Adversarial Stress Tests
+                 │
+                 ▼
+       Risk & Robustness Analysis
 ```
 
 ## What the System Does
 
 ### 1. Market Data Pipeline
 
-Historical OHLCV data is downloaded with Yahoo Finance and transformed into model-ready time-series features:
+Historical OHLCV data is downloaded with Yahoo Finance and transformed into model-ready features:
 
 - Data validation and schema checks
 - Duplicate removal and chronological sorting
@@ -56,15 +61,25 @@ Historical OHLCV data is downloaded with Yahoo Finance and transformed into mode
 
 ### 2. Synthetic Market Generation
 
-An LSTM generator and LSTM discriminator are trained **only on the chronological training split**. The generator models three market variables jointly:
+A probabilistic autoregressive LSTM generator and LSTM discriminator are trained **only on the chronological training split**. The generator models three market variables jointly:
 
 - Log return
 - Log volume change
 - Normalized price range
 
-Features are normalized independently before adversarial training. The trained generator is then rolled out as a **single continuous trajectory**, preventing artificial transitions between independently generated windows.
+Skewed positive/negative features are transformed into stable model space before normalization. The generator predicts the next market state from the previous state and latent noise, with adversarial, likelihood, moment, and serial-dependence objectives.
 
-Generator validation is performed against the training distribution and checks feature statistics, tail quantiles, return autocorrelation, and extreme-return frequency. The held-out test period is not used for generator validation or tuning.
+Synthetic data is generated as **independent 30-step market episodes**, matching the generator's training horizon. The system does not extrapolate a 30-step generator into an artificial multi-year trajectory.
+
+Generator validation compares synthetic and real training distributions using:
+
+- Mean and volatility
+- Tail quantiles
+- Lag-1 and lag-5 return dependence
+- Extreme-return frequency
+- Explicit acceptance gates
+
+The held-out test period is never used for generator training, validation, or tuning.
 
 ### 3. Reinforcement Learning
 
@@ -80,7 +95,13 @@ The continuous action represents portfolio exposure:
 
 The environment models transaction costs, position turnover, portfolio value, and return-based rewards. Financial evaluation uses actual portfolio-period returns rather than the PPO reward signal.
 
-For the combined experiment, real and synthetic data are kept as **separate environments sampled in parallel**. They are not concatenated into one artificial time series, so PPO never learns from an impossible real→synthetic transition.
+To make the experiments comparable, all PPO variants use the same **30-step episodic training protocol**:
+
+1. **Real PPO** samples random chronological 30-step windows from the real training split.
+2. **Synthetic PPO** samples independently generated 30-step episodes.
+3. **Combined PPO** samples real and synthetic episodes with equal source probability.
+
+No artificial real→synthetic or synthetic→real transition is exposed to PPO.
 
 ### 4. Adversarial Stress Testing
 
@@ -94,18 +115,18 @@ The trained agents are evaluated under controlled market shocks:
 | Crash | Controlled 20% cumulative loss injected over a short mid-path window |
 | Market amplification | 1.5× amplification of return deviations around the sample mean |
 
-Because this repository currently uses a single asset, the final scenario is explicitly treated as **market-movement amplification rather than a literal correlation shock**. A true correlation test requires multiple assets.
+Because this repository currently uses a single asset, market amplification is explicitly **not** described as a cross-asset correlation test. Genuine correlation stress testing requires multiple assets.
 
-All final model comparisons and stress tests use the same unseen 20% historical test period.
+All final comparisons and stress tests use the same unseen 20% historical test period.
 
 ### 5. Experimental Comparison
 
 The experiment compares:
 
-1. **Buy-and-hold benchmark** — a passive unlevered baseline.
-2. **Real-only PPO** — trained on the 80% chronological real-data training split.
-3. **Synthetic-only PPO** — trained on a continuous synthetic trajectory generated from the training distribution.
-4. **Real + synthetic PPO** — trained with separate real and synthetic environments sampled in parallel with equal rollout representation.
+1. **Buy-and-hold benchmark** — passive unlevered exposure over the held-out period.
+2. **Real-only PPO** — trained only on real training windows.
+3. **Synthetic-only PPO** — trained only on generated episodes.
+4. **Real + synthetic PPO** — trained on balanced real and synthetic episode sources.
 
 All strategies are evaluated on the same unseen 20% real-data test period and its controlled stress scenarios.
 
@@ -123,7 +144,7 @@ All strategies are evaluated on the same unseen 20% real-data test period and it
 - Value at Risk (VaR)
 - Conditional Value at Risk (CVaR)
 
-The Sortino ratio uses full downside deviation relative to a zero target. VaR and CVaR are reported as return quantiles, so negative values represent losses.
+Metrics are computed from actual portfolio-period returns. Sortino uses full downside deviation relative to a zero target. VaR and CVaR are reported as return quantiles, so negative values represent losses.
 
 ## Project Structure
 
@@ -147,6 +168,7 @@ Adversarial-Stock-Simulator/
 │   │   ├── download.py
 │   │   └── loader.py
 │   ├── environment/
+│   │   ├── episode_env.py
 │   │   └── trading_env.py
 │   ├── evaluation/
 │   │   ├── benchmarks.py
@@ -216,15 +238,15 @@ The default experiment downloads 10 years of AAPL data into `data/raw/`.
 python -m src.generator.train
 ```
 
-The generator is trained only on the chronological training split.
+The generator uses only the chronological training split.
 
-### 3. Validate generated sequences
+### 3. Validate the generator
 
 ```bash
 python -m src.generator.validate
 ```
 
-Validation uses the training distribution only and does not inspect the held-out test period.
+Validation is a hard gate. Do not train PPO when the generator fails validation.
 
 ### 4. Train PPO variants
 
@@ -234,7 +256,7 @@ python -m src.agent.train_synthetic
 python -m src.agent.train_combined
 ```
 
-Training scripts use a fixed seed of 42 for reproducibility.
+All training scripts use seed 42 and matched 30-step episode horizons.
 
 ### 5. Compare all strategies
 
@@ -262,7 +284,7 @@ Run the automated tests with:
 pytest -q
 ```
 
-The suite covers feature generation, chronological ordering, environment behavior, action validation, portfolio-return reporting, controlled stress scenarios, and downside-risk metrics.
+The suite covers feature generation, chronological ordering, environment behavior, episodic sampling, action validation, portfolio-return reporting, controlled stress scenarios, multivariate sequence normalization, and downside-risk metrics.
 
 ## Configuration
 
@@ -275,16 +297,16 @@ Core experiment settings are centralized in `configs/default.yaml`, including:
 - PPO training budget
 - Evaluation confidence level
 
-The current default experiment uses **AAPL**, a 30-step sequence length, an 80/20 chronological split, a 50,000-step PPO budget, and a 95% risk confidence level.
+The current default experiment uses **AAPL**, a 30-step episode/sequence length, an 80/20 chronological split, a 50,000-step PPO budget, and a 95% risk confidence level.
 
 ## Research Questions
 
-1. Can a recurrent adversarial generator produce statistically useful multivariate market sequences?
-2. How does PPO trained on synthetic data perform on real market conditions?
-3. Does combining real and synthetic data improve robustness without sacrificing excessive normal-period performance?
+1. Can a probabilistic recurrent adversarial generator produce statistically plausible multivariate market episodes?
+2. How does PPO trained on synthetic episodes transfer to unseen real-market conditions?
+3. Does combining validated synthetic episodes with real training windows improve robustness?
 4. How sensitive are trading agents to volatility, drawdown, and crash scenarios?
-5. Does synthetic-data validation predict whether synthetic trajectories transfer successfully to reinforcement learning?
-6. How do learned policies compare with a passive buy-and-hold baseline?
+5. Does synthetic-distribution quality predict downstream RL transfer?
+6. How do learned policies compare with passive buy-and-hold?
 
 ## Limitations
 
@@ -292,6 +314,7 @@ This is an experimental research and portfolio project rather than a production 
 
 - Single-asset experiments
 - Simplified market microstructure
+- Synthetic features are limited to returns, volume change, and price range
 - Controlled stress scenarios rather than learned attacks
 - Single-asset stress testing cannot measure true cross-asset correlation
 - No live trading or execution infrastructure
@@ -299,7 +322,7 @@ This is an experimental research and portfolio project rather than a production 
 
 ## Future Work
 
-- Multivariate OHLCV/market generation including additional state variables
+- Multivariate OHLCV/market generation with additional state variables
 - Regime-conditioned generative models
 - Learned adversarial policies
 - Portfolio-level reinforcement learning
