@@ -64,7 +64,12 @@ def _generate_episode(checkpoint, model, rng, length):
                 checkpoint["noise_dim"],
                 generator=rng,
             )
-            current, _, _, hidden = model.step(current, noise, hidden)
+            current, _, _, hidden = model.step(
+                current,
+                noise,
+                hidden,
+                sample_generator=rng,
+            )
             outputs.append(current)
 
     values = torch.cat(outputs, dim=1).squeeze(0).numpy()
