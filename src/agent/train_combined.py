@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import pandas as pd
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -22,11 +21,11 @@ def main():
     real = create_features(load_stock_data(DATA_PATH))
     train_real, _ = train_test_split_time_series(real, train_ratio=0.8)
 
-    synthetic = generate_synthetic_dataframe()
+    synthetic = generate_synthetic_dataframe(seed=SEED)
 
-    # Keep each source as its own environment. Concatenating the two datasets
-    # creates an artificial transition from the final real return to the first
-    # synthetic return and lets PPO learn from that impossible boundary.
+    # Each source is a separate environment. PPO samples both environments in
+    # parallel, so no artificial real->synthetic transition exists inside an
+    # episode and both sources contribute equally to the rollout buffer.
     def make_real_env():
         return TradingEnv(train_real)
 
