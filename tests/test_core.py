@@ -6,9 +6,9 @@ from src.adversarial.scenarios import (
     generate_adversarial_scenarios,
     market_crash,
 )
+from src.data.loader import create_features
 from src.environment.episode_env import RandomEpisodeEnv, make_rolling_episodes
 from src.environment.trading_env import TradingEnv
-from src.data.loader import create_features
 from src.evaluation.benchmarks import evaluate_buy_and_hold
 from src.evaluation.metrics import sortino_ratio
 from src.generator.dataset import (
@@ -33,15 +33,19 @@ def sample_data():
 
 def test_feature_pipeline():
     df = create_features(sample_data())
+
     assert {"return", "volatility_20", "volume_change", "price_range"}.issubset(df.columns)
     assert len(df) > 0
-    assert np.isfinite(df[["return", "volatility_20", "volume_change", "price_range"]]).all().all()
+    assert np.isfinite(
+        df[["return", "volatility_20", "volume_change", "price_range"]]
+    ).all().all()
 
 
 def test_time_series_features_are_chronological():
     raw = sample_data()
     raw.index = pd.date_range("2020-01-01", periods=len(raw), freq="D")
     raw.index.name = "Date"
+
     df = create_features(raw)
     assert df.index.is_monotonic_increasing
 
@@ -49,27 +53,38 @@ def test_time_series_features_are_chronological():
 def test_environment_reset_and_step():
     df = create_features(sample_data())
     env = TradingEnv(df)
+
     observation, _ = env.reset(seed=42)
     assert observation.shape == env.observation_space.shape
+    assert observation.shape == (6,)
     assert env.action_space.contains(np.array([0.0], dtype=np.float32))
     assert env.action_space.contains(np.array([-1.0], dtype=np.float32))
     assert env.action_space.contains(np.array([1.0], dtype=np.float32))
+    assert observation[-2] == 0.0
+    assert observation[-1] == 0.0
 
-    observation, reward, terminated, truncated, info = env.step(np.array([0.5], dtype=np.float32))
+    observation, reward, terminated, truncated, info = env.step(
+        np.array([0.5], dtype=np.float32)
+    )
+
     assert np.isfinite(reward)
     assert observation.shape == env.observation_space.shape
     assert info["position"] == 0.5
     assert info["portfolio_value"] > 0
     assert info["portfolio_return"] <= 1.0
+    assert info["drawdown"] >= 0.0
     assert not truncated
 
 
 def test_environment_rejects_invalid_data():
     df = create_features(sample_data())
+
     with np.testing.assert_raises(ValueError):
         TradingEnv(df.iloc[:1])
+
     with np.testing.assert_raises(ValueError):
         TradingEnv(df, initial_cash=0)
+
     with np.testing.assert_raises(ValueError):
         TradingEnv(df, transaction_cost=-0.01)
 
@@ -77,11 +92,13 @@ def test_environment_rejects_invalid_data():
 def test_stress_scenarios_are_controlled_and_timed():
     df = create_features(sample_data())
     baseline = df["return"].to_numpy()
+
     drawdown = drawdown_shock(df, magnitude=0.10, duration=20, start_fraction=0.25)
     crash = market_crash(df, magnitude=0.20, duration=5, start_fraction=0.50)
 
     drawdown_delta = drawdown["return"].to_numpy() - baseline
     crash_delta = crash["return"].to_numpy() - baseline
+
     drawdown_start = int(len(df) * 0.25)
     drawdown_end = min(drawdown_start + 20, len(df))
     crash_start = int(len(df) * 0.50)
@@ -101,6 +118,7 @@ def test_stress_scenarios_are_controlled_and_timed():
 def test_scenario_names_are_explicit_for_single_asset_setup():
     df = create_features(sample_data())
     scenarios = generate_adversarial_scenarios(df)
+
     assert set(scenarios) == {"volatility", "drawdown", "crash"}
 
 
@@ -113,8 +131,10 @@ def test_multivariate_sequence_round_trip():
     df = create_features(sample_data())
     columns = ["return", "volume_change", "price_range"]
     sequences = create_sequences(df, sequence_length=10, feature_columns=columns)
+
     normalized, mean, std = normalize_sequences(sequences)
     restored = denormalize_sequences(normalized, mean, std)
+
     assert sequences.ndim == 3
     assert sequences.shape[2] == len(columns)
     assert mean.shape == (len(columns),)
@@ -126,23 +146,29 @@ def test_multivariate_sequence_round_trip():
 def test_buy_and_hold_uses_same_realized_period_count_as_trading_env():
     df = create_features(sample_data())
     result = evaluate_buy_and_hold(df)
+
     realized_returns = np.expm1(df["return"].to_numpy()[1:])
     expected_return = np.prod(1.0 + realized_returns) - 1.0
+
     assert np.isclose(result["return"], expected_return)
 
 
 def test_random_episode_env_samples_valid_episodes():
     df = create_features(sample_data())
     episodes = make_rolling_episodes(df, episode_length=15, stride=5)
+
     assert len(episodes) > 1
     env = RandomEpisodeEnv(episodes)
     observation, _ = env.reset(seed=42)
     assert observation.shape == env.observation_space.shape
 
     for _ in range(14):
-        observation, reward, terminated, truncated, info = env.step(np.array([0.0], dtype=np.float32))
+        observation, reward, terminated, truncated, info = env.step(
+            np.array([0.0], dtype=np.float32)
+        )
         assert np.isfinite(reward)
         assert not truncated
+
     assert terminated
 
 
@@ -150,6 +176,7 @@ def test_random_episode_env_honors_sampling_weights():
     df = create_features(sample_data())
     episodes = make_rolling_episodes(df, episode_length=10, stride=10)[:2]
     env = RandomEpisodeEnv(episodes, weights=[1.0, 0.0])
+
     observation, _ = env.reset(seed=123)
     assert observation.shape == env.observation_space.shape
     assert env._env is not None
