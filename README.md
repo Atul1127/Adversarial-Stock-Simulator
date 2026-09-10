@@ -19,17 +19,18 @@ Historical OHLCV Data
         │
         ├───────────────┐
         ▼               ▼
-   Real Returns   LSTM Generator
+   Real Features   LSTM Generator
                         │
                         ▼
-                 Synthetic Returns
+             Synthetic Market Features
                         │
-             ┌──────────┼──────────┐
-             ▼          ▼          ▼
-           Real     Synthetic   Combined
-             └──────────┼──────────┘
+             ┌──────────┴──────────┐
+             ▼                     ▼
+       Synthetic PPO        Real + Synthetic PPO
+             │                     │
+             └──────────┬──────────┘
                         ▼
-                  PPO Trading Agent
+                  Out-of-Sample Test
                         │
                         ▼
              Adversarial Stress Tests
@@ -55,17 +56,15 @@ Historical OHLCV data is downloaded with Yahoo Finance and transformed into mode
 
 ### 2. Synthetic Market Generation
 
-An LSTM generator learns return-sequence structure from the **chronological training split only**, while an LSTM discriminator distinguishes real and generated sequences.
+An LSTM generator and LSTM discriminator are trained **only on the chronological training split**. The generator models three market variables jointly:
 
-Synthetic sequences are validated using:
+- Log return
+- Log volume change
+- Normalized price range
 
-- Return distributions
-- Volatility
-- Tail behavior
-- Autocorrelation
-- Extreme-return frequency
+Features are normalized independently before adversarial training. The trained generator is then rolled out as a **single continuous trajectory**, preventing artificial transitions between independently generated windows.
 
-For PPO training, synthetic returns are generated as a **continuous LSTM trajectory** rather than flattening independently generated samples. The generator checkpoint stores the training split statistics used for denormalization.
+Generator validation is performed against the training distribution and checks feature statistics, tail quantiles, return autocorrelation, and extreme-return frequency. The held-out test period is not used for generator validation or tuning.
 
 ### 3. Reinforcement Learning
 
@@ -81,7 +80,7 @@ The continuous action represents portfolio exposure:
 
 The environment models transaction costs, position turnover, portfolio value, and return-based rewards. Financial evaluation uses actual portfolio-period returns rather than the PPO reward signal.
 
-The combined PPO experiment does **not** concatenate real and synthetic returns into one artificial time series. Instead, real and synthetic markets are separate environments sampled in parallel, so no impossible real→synthetic transition enters the rollout buffer.
+For the combined experiment, real and synthetic data are kept as **separate environments sampled in parallel**. They are not concatenated into one artificial time series, so PPO never learns from an impossible real→synthetic transition.
 
 ### 4. Adversarial Stress Testing
 
@@ -105,8 +104,8 @@ The experiment compares:
 
 1. **Buy-and-hold benchmark** — a passive unlevered baseline.
 2. **Real-only PPO** — trained on the 80% chronological real-data training split.
-3. **Synthetic-only PPO** — trained on generated market sequences from the training distribution.
-4. **Real + synthetic PPO** — trained with separate real and synthetic environments sampled in parallel.
+3. **Synthetic-only PPO** — trained on a continuous synthetic trajectory generated from the training distribution.
+4. **Real + synthetic PPO** — trained with separate real and synthetic environments sampled in parallel with equal rollout representation.
 
 All strategies are evaluated on the same unseen 20% real-data test period and its controlled stress scenarios.
 
@@ -280,7 +279,7 @@ The current default experiment uses **AAPL**, a 30-step sequence length, an 80/2
 
 ## Research Questions
 
-1. Can a recurrent adversarial generator produce statistically useful market return sequences?
+1. Can a recurrent adversarial generator produce statistically useful multivariate market sequences?
 2. How does PPO trained on synthetic data perform on real market conditions?
 3. Does combining real and synthetic data improve robustness without sacrificing excessive normal-period performance?
 4. How sensitive are trading agents to volatility, drawdown, and crash scenarios?
@@ -293,8 +292,6 @@ This is an experimental research and portfolio project rather than a production 
 
 - Single-asset experiments
 - Simplified market microstructure
-- Synthetic returns rather than full OHLCV generation
-- Return-derived proxy features for the synthetic environment
 - Controlled stress scenarios rather than learned attacks
 - Single-asset stress testing cannot measure true cross-asset correlation
 - No live trading or execution infrastructure
@@ -302,7 +299,7 @@ This is an experimental research and portfolio project rather than a production 
 
 ## Future Work
 
-- Multivariate OHLCV/market generation
+- Multivariate OHLCV/market generation including additional state variables
 - Regime-conditioned generative models
 - Learned adversarial policies
 - Portfolio-level reinforcement learning
