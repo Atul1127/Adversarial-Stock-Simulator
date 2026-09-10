@@ -8,7 +8,9 @@ from src.adversarial.scenarios import (
 )
 from src.data.loader import create_features
 from src.environment.trading_env import TradingEnv
+from src.evaluation.benchmarks import evaluate_buy_and_hold
 from src.evaluation.metrics import sortino_ratio
+from src.generator.dataset import create_sequences, normalize_sequences, denormalize_sequences
 
 
 def sample_data():
@@ -114,3 +116,28 @@ def test_scenario_names_are_explicit_for_single_asset_setup():
 def test_sortino_uses_full_downside_deviation():
     returns = np.array([0.02, -0.01, 0.03, -0.02])
     assert np.isfinite(sortino_ratio(returns))
+
+
+def test_multivariate_sequence_round_trip():
+    df = create_features(sample_data())
+    columns = ["return", "volume_change", "price_range"]
+    sequences = create_sequences(df, sequence_length=10, feature_columns=columns)
+
+    normalized, mean, std = normalize_sequences(sequences)
+    restored = denormalize_sequences(normalized, mean, std)
+
+    assert sequences.ndim == 3
+    assert sequences.shape[2] == len(columns)
+    assert mean.shape == (len(columns),)
+    assert std.shape == (len(columns),)
+    assert np.allclose(restored, sequences, atol=1e-6)
+
+
+def test_buy_and_hold_uses_same_realized_period_count_as_trading_env():
+    df = create_features(sample_data())
+    result = evaluate_buy_and_hold(df)
+
+    realized_returns = np.expm1(df["return"].to_numpy()[1:])
+    expected_return = np.prod(1.0 + realized_returns) - 1.0
+
+    assert np.isclose(result["return"], expected_return)
