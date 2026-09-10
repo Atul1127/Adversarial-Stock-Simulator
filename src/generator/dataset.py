@@ -23,7 +23,10 @@ def create_sequences(
         raise ValueError("Not enough observations for requested sequence length.")
 
     return np.asarray(
-        [values[i : i + sequence_length] for i in range(len(values) - sequence_length + 1)],
+        [
+            values[i : i + sequence_length]
+            for i in range(len(values) - sequence_length + 1)
+        ],
         dtype=np.float32,
     )
 
@@ -31,19 +34,27 @@ def create_sequences(
 def normalize_sequences(
     sequences: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Normalize each generated feature independently."""
+    """Normalize each generated feature independently.
+
+    Constant features are valid and are represented by a unit scale so that
+    normalization remains finite while denormalization reconstructs the
+    original constant values exactly.
+    """
     sequences = np.asarray(sequences, dtype=np.float32)
     if sequences.ndim != 3:
         raise ValueError("sequences must have shape (samples, timesteps, features).")
+    if not np.isfinite(sequences).all():
+        raise ValueError("sequences must contain only finite values.")
 
     mean = sequences.mean(axis=(0, 1)).astype(np.float32)
     std = sequences.std(axis=(0, 1)).astype(np.float32)
 
-    if np.any(std == 0):
-        raise ValueError("Cannot normalize zero-variance sequence features.")
+    # A zero-variance feature should normalize to zero rather than make the
+    # entire dataset unusable. Unit scale preserves exact round-tripping.
+    safe_std = np.where(std == 0, 1.0, std).astype(np.float32)
+    normalized = (sequences - mean) / safe_std
 
-    normalized = (sequences - mean) / std
-    return normalized.astype(np.float32), mean, std
+    return normalized.astype(np.float32), mean, safe_std
 
 
 def denormalize_sequences(
