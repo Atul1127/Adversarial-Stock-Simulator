@@ -18,25 +18,32 @@ from src.evaluation.metrics import (
 
 
 def evaluate(model, data):
-    """Evaluate a model using actual portfolio-period returns."""
+    """Evaluate a model using portfolio returns and simple policy diagnostics."""
     env = TradingEnv(data)
-    obs, _ = env.reset()
+    obs, _ = env.reset(seed=42)
 
     portfolio_values = [env.initial_cash]
     portfolio_returns = []
+    positions = []
+    turnovers = []
 
     while True:
         action, _ = model.predict(obs, deterministic=True)
+        previous_position = env.position
         obs, _, terminated, truncated, info = env.step(action)
 
         portfolio_values.append(info["portfolio_value"])
         portfolio_returns.append(info["portfolio_return"])
+        positions.append(info["position"])
+        turnovers.append(abs(info["position"] - previous_position))
 
         if terminated or truncated:
             break
 
     portfolio_values = np.asarray(portfolio_values, dtype=float)
     portfolio_returns = np.asarray(portfolio_returns, dtype=float)
+    positions = np.asarray(positions, dtype=float)
+    turnovers = np.asarray(turnovers, dtype=float)
 
     return {
         "return": total_return(portfolio_values),
@@ -45,16 +52,19 @@ def evaluate(model, data):
         "max_drawdown": max_drawdown(portfolio_values),
         "var_95": var(portfolio_returns),
         "cvar_95": cvar(portfolio_returns),
+        "avg_position": float(positions.mean()),
+        "avg_abs_position": float(np.abs(positions).mean()),
+        "long_pct": float(np.mean(positions >= 0.5)),
+        "neutral_pct": float(np.mean(np.abs(positions) < 0.5)),
+        "short_pct": float(np.mean(positions <= -0.5)),
+        "avg_turnover": float(turnovers.mean()),
     }
 
 
 def main():
-    full_data = create_features(
-        load_stock_data("data/raw/AAPL.csv")
-    )
+    full_data = create_features(load_stock_data("data/raw/AAPL.csv"))
     _, test_data = train_test_split_time_series(full_data, train_ratio=0.8)
 
-    # Final robustness evaluation is strictly out-of-sample.
     scenarios = {
         "real": test_data,
         **generate_adversarial_scenarios(test_data),
@@ -72,12 +82,7 @@ def main():
     print("\n" + "=" * 90)
     print("PPO ADVERSARIAL ROBUSTNESS REPORT — OUT-OF-SAMPLE")
     print("=" * 90)
-    print(
-        results_df.to_string(
-            index=False,
-            float_format=lambda x: f"{x:.4f}",
-        )
-    )
+    print(results_df.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
 
     output_path = Path("results/robustness_report.csv")
     output_path.parent.mkdir(parents=True, exist_ok=True)
