@@ -27,8 +27,16 @@ def autocorrelation(x: np.ndarray, lag: int = 1) -> float:
     return float((x0 * x1).mean() / denominator)
 
 
-def _load_model(checkpoint):
+def generate_validation_episodes(checkpoint, num_episodes=NUM_VALIDATION_EPISODES):
+    """Generate independent episodes at exactly the training horizon."""
+    feature_columns = checkpoint["feature_columns"]
     feature_dim = checkpoint["output_dim"]
+    length = checkpoint["sequence_length"]
+
+    initial_states = torch.as_tensor(checkpoint["initial_states"], dtype=torch.float32)
+    if initial_states.ndim != 2 or initial_states.shape[1] != feature_dim:
+        raise ValueError("Generator checkpoint initial states are invalid.")
+
     model = Generator(
         checkpoint["noise_dim"],
         checkpoint["hidden_dim"],
@@ -38,23 +46,11 @@ def _load_model(checkpoint):
     )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
-    return model
 
-
-def generate_validation_episodes(checkpoint, num_episodes=NUM_VALIDATION_EPISODES):
-    """Generate independent episodes using exactly the trained sequence horizon."""
-    feature_columns = checkpoint["feature_columns"]
-    feature_dim = checkpoint["output_dim"]
-    length = checkpoint["sequence_length"]
-    initial_states = torch.as_tensor(checkpoint["initial_states"], dtype=torch.float32)
-    if initial_states.ndim != 2 or initial_states.shape[1] != feature_dim:
-        raise ValueError("Generator checkpoint initial states are invalid.")
-
-    model = _load_model(checkpoint)
     rng = torch.Generator(device="cpu")
     rng.manual_seed(checkpoint.get("seed", 42))
-
     episodes = []
+
     with torch.no_grad():
         for _ in range(num_episodes):
             start_index = int(
@@ -71,7 +67,12 @@ def generate_validation_episodes(checkpoint, num_episodes=NUM_VALIDATION_EPISODE
                     checkpoint["noise_dim"],
                     generator=rng,
                 )
-                current, _, _, hidden = model.step(current, noise, hidden)
+                current, _, _, hidden = model.step(
+                    current,
+                    noise,
+                    hidden,
+                    sample_generator=rng,
+                )
                 outputs.append(current)
 
             model_space = torch.cat(outputs, dim=1).squeeze(0).numpy()
