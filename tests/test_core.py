@@ -10,7 +10,11 @@ from src.data.loader import create_features
 from src.environment.trading_env import TradingEnv
 from src.evaluation.benchmarks import evaluate_buy_and_hold
 from src.evaluation.metrics import sortino_ratio
-from src.generator.dataset import create_sequences, normalize_sequences, denormalize_sequences
+from src.generator.dataset import (
+    create_sequences,
+    normalize_sequences,
+    denormalize_sequences,
+)
 
 
 def sample_data():
@@ -90,13 +94,18 @@ def test_stress_scenarios_are_controlled_and_timed():
     drawdown_delta = drawdown["return"].to_numpy() - baseline
     crash_delta = crash["return"].to_numpy() - baseline
 
-    assert np.allclose(drawdown_delta[:25], 0.0)
-    assert np.allclose(crash_delta[:50], 0.0)
-    assert np.all(drawdown_delta[25:45] < 0)
-    assert np.all(crash_delta[50:55] < 0)
+    drawdown_start = int(len(df) * 0.25)
+    drawdown_end = min(drawdown_start + 20, len(df))
+    crash_start = int(len(df) * 0.50)
+    crash_end = min(crash_start + 5, len(df))
 
-    drawdown_simple_loss = 1.0 - np.prod(np.exp(drawdown_delta[25:45]))
-    crash_simple_loss = 1.0 - np.prod(np.exp(crash_delta[50:55]))
+    assert np.allclose(drawdown_delta[:drawdown_start], 0.0)
+    assert np.allclose(crash_delta[:crash_start], 0.0)
+    assert np.all(drawdown_delta[drawdown_start:drawdown_end] < 0)
+    assert np.all(crash_delta[crash_start:crash_end] < 0)
+
+    drawdown_simple_loss = 1.0 - np.exp(drawdown_delta[drawdown_start:drawdown_end].sum())
+    crash_simple_loss = 1.0 - np.exp(crash_delta[crash_start:crash_end].sum())
     assert np.isclose(drawdown_simple_loss, 0.10, atol=1e-6)
     assert np.isclose(crash_simple_loss, 0.20, atol=1e-6)
 
@@ -130,6 +139,7 @@ def test_multivariate_sequence_round_trip():
     assert sequences.shape[2] == len(columns)
     assert mean.shape == (len(columns),)
     assert std.shape == (len(columns),)
+    assert np.all(np.isfinite(normalized))
     assert np.allclose(restored, sequences, atol=1e-6)
 
 
