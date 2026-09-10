@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
@@ -77,7 +79,8 @@ def main():
         )
     )
 
-    output_path = "results/robustness_report.csv"
+    output_path = Path("results/robustness_report.csv")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     results_df.to_csv(output_path, index=False)
     print(f"\nSaved: {output_path}")
 
