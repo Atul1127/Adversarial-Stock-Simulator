@@ -9,7 +9,6 @@ from src.data.loader import (
 from src.generator.dataset import (
     denormalize_sequences,
     inverse_transform_features,
-    transform_features,
 )
 from src.generator.model import Generator
 
@@ -23,6 +22,54 @@ def autocorrelation(x: np.ndarray, lag: int = 1) -> float:
     if len(x) <= lag or np.std(x[:-lag]) == 0 or np.std(x[lag:]) == 0:
         return 0.0
     return float(np.corrcoef(x[:-lag], x[lag:])[0, 1])
+
+
+def generate_trajectory(checkpoint, total_steps):
+    """Generate a deterministic validation trajectory from checkpoint metadata."""
+    feature_columns = checkpoint["feature_columns"]
+    feature_dim = checkpoint["output_dim"]
+    model = Generator(
+        checkpoint["noise_dim"],
+        checkpoint["hidden_dim"],
+        feature_dim,
+        checkpoint.get("min_scale", 0.05),
+        checkpoint.get("max_scale", 2.0),
+    )
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+
+    initial_states = torch.as_tensor(checkpoint["initial_states"], dtype=torch.float32)
+    if initial_states.ndim != 2 or initial_states.shape[1] != feature_dim:
+        raise ValueError("Generator checkpoint initial states are invalid.")
+
+    seed = checkpoint.get("seed", 42)
+    torch.manual_seed(seed)
+    rng = torch.Generator(device="cpu")
+    rng.manual_seed(seed)
+    start_index = int(torch.randint(len(initial_states), (1,), generator=rng).item())
+
+    current = initial_states[start_index].view(1, 1, feature_dim)
+    hidden = None
+    outputs = [current]
+
+    with torch.no_grad():
+        for _ in range(total_steps - 1):
+            noise = torch.randn(
+                1,
+                1,
+                checkpoint["noise_dim"],
+                generator=rng,
+            )
+            current, _, _, hidden = model.step(current, noise, hidden)
+            outputs.append(current)
+
+    synthetic = torch.cat(outputs, dim=1).squeeze(0).numpy()
+    synthetic = denormalize_sequences(
+        synthetic,
+        np.asarray(checkpoint["mean"]),
+        np.asarray(checkpoint["std"]),
+    )
+    return inverse_transform_features(synthetic, feature_columns).astype(np.float64)
 
 
 def main():
@@ -48,16 +95,6 @@ def main():
     if feature_dim != len(feature_columns):
         raise ValueError("Generator checkpoint feature dimension is inconsistent.")
 
-    max_normalized_value = checkpoint.get("max_normalized_value", 3.0)
-    model = Generator(
-        checkpoint["noise_dim"],
-        checkpoint["hidden_dim"],
-        feature_dim,
-        max_normalized_value,
-    )
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.eval()
-
     full_df = create_features(load_stock_data("data/raw/AAPL.csv"))
     train_df, _ = train_test_split_time_series(
         full_df,
@@ -65,33 +102,7 @@ def main():
     )
 
     real = train_df[feature_columns].to_numpy(dtype=np.float64)
-    initial_states = torch.as_tensor(checkpoint["initial_states"], dtype=torch.float32)
-    rng = torch.Generator(device="cpu")
-    rng.manual_seed(checkpoint.get("seed", 42))
-
-    start_index = int(torch.randint(len(initial_states), (1,), generator=rng).item())
-    current = initial_states[start_index].view(1, 1, feature_dim)
-    hidden = None
-    outputs = [current]
-
-    with torch.no_grad():
-        for _ in range(len(real) - 1):
-            noise = torch.randn(
-                1,
-                1,
-                checkpoint["noise_dim"],
-                generator=rng,
-            )
-            current, hidden = model(current, noise, hidden)
-            outputs.append(current)
-
-    synthetic_model_space = torch.cat(outputs, dim=1).squeeze(0).numpy()
-    synthetic = denormalize_sequences(
-        synthetic_model_space,
-        np.asarray(checkpoint["mean"]),
-        np.asarray(checkpoint["std"]),
-    )
-    synthetic = inverse_transform_features(synthetic, feature_columns).astype(np.float64)
+    synthetic = generate_trajectory(checkpoint, len(real))
 
     print("=" * 70)
     print("MARKET GENERATOR VALIDATION — TRAIN DISTRIBUTION")
@@ -102,10 +113,12 @@ def main():
         synthetic_feature = synthetic[:, idx]
         print(f"\n{feature}")
         print(
-            f"  Real mean/std:       {real_feature.mean(): .6f} / {real_feature.std(): .6f}"
+            f"  Real mean/std:       {real_feature.mean(): .6f} / "
+            f"{real_feature.std(): .6f}"
         )
         print(
-            f"  Synthetic mean/std:  {synthetic_feature.mean(): .6f} / {synthetic_feature.std(): .6f}"
+            f"  Synthetic mean/std:  {synthetic_feature.mean(): .6f} / "
+            f"{synthetic_feature.std(): .6f}"
         )
         for quantile in (0.01, 0.05, 0.95, 0.99):
             print(
@@ -113,41 +126,52 @@ def main():
                 f"synthetic {np.quantile(synthetic_feature, quantile): .6f}"
             )
 
-    real_returns = real[:, feature_columns.index("return")]
-    synthetic_returns = synthetic[:, feature_columns.index("return")]
+    return_idx = feature_columns.index("return")
+    real_returns = real[:, return_idx]
+    synthetic_returns = synthetic[:, return_idx]
+    real_lag1 = autocorrelation(real_returns)
+    synthetic_lag1 = autocorrelation(synthetic_returns)
+    real_lag5 = autocorrelation(real_returns, 5)
+    synthetic_lag5 = autocorrelation(synthetic_returns, 5)
+
     print("\nReturn serial dependence")
-    print(f"  Real lag-1:       {autocorrelation(real_returns): .6f}")
-    print(f"  Synthetic lag-1:  {autocorrelation(synthetic_returns): .6f}")
-    print(f"  Real lag-5:       {autocorrelation(real_returns, 5): .6f}")
-    print(f"  Synthetic lag-5:  {autocorrelation(synthetic_returns, 5): .6f}")
+    print(f"  Real lag-1:       {real_lag1: .6f}")
+    print(f"  Synthetic lag-1:  {synthetic_lag1: .6f}")
+    print(f"  Real lag-5:       {real_lag5: .6f}")
+    print(f"  Synthetic lag-5:  {synthetic_lag5: .6f}")
 
     real_threshold = np.quantile(np.abs(real_returns), 0.95)
-    synthetic_extreme_rate = np.mean(np.abs(synthetic_returns) > real_threshold)
-    print("\nExtreme-return frequency")
-    print(
-        "  Synthetic |return| above real 95th percentile: "
-        f"{synthetic_extreme_rate:.2%}"
+    synthetic_extreme_rate = float(
+        np.mean(np.abs(synthetic_returns) > real_threshold)
     )
 
-    return_mean_ratio = abs(synthetic_returns.mean() - real_returns.mean()) / max(
-        real_returns.std(), 1e-8
-    )
+    return_mean_offset = abs(
+        synthetic_returns.mean() - real_returns.mean()
+    ) / max(real_returns.std(), 1e-8)
     return_std_ratio = synthetic_returns.std() / max(real_returns.std(), 1e-8)
+    lag1_gap = abs(synthetic_lag1 - real_lag1)
 
     print("\nValidation gates")
-    print(f"  Mean offset (real std units): {return_mean_ratio:.3f}")
+    print(f"  Mean offset (real std units): {return_mean_offset:.3f}")
     print(f"  Volatility ratio:              {return_std_ratio:.3f}")
     print(f"  Extreme-return rate:           {synthetic_extreme_rate:.2%}")
+    print(f"  Lag-1 correlation gap:         {lag1_gap:.3f}")
 
-    if return_mean_ratio > 2.0 or not 0.25 <= return_std_ratio <= 2.0:
-        raise RuntimeError(
-            "Synthetic return distribution failed validation: "
-            f"mean_offset_z={return_mean_ratio:.3f}, std_ratio={return_std_ratio:.3f}."
+    failures = []
+    if return_mean_offset > 2.0:
+        failures.append(f"mean_offset_z={return_mean_offset:.3f}")
+    if not 0.50 <= return_std_ratio <= 1.50:
+        failures.append(f"std_ratio={return_std_ratio:.3f}")
+    if not 0.01 <= synthetic_extreme_rate <= 0.20:
+        failures.append(f"extreme_rate={synthetic_extreme_rate:.2%}")
+    if lag1_gap > 0.25 or abs(synthetic_lag1) > 0.30:
+        failures.append(
+            f"lag1_real={real_lag1:.3f},lag1_synthetic={synthetic_lag1:.3f}"
         )
-    if synthetic_extreme_rate > 0.25:
+
+    if failures:
         raise RuntimeError(
-            "Synthetic tail frequency failed validation: "
-            f"{synthetic_extreme_rate:.2%} exceeds the allowed 25%."
+            "Synthetic generator failed validation: " + "; ".join(failures)
         )
 
     print(f"\nValidated trajectory length: {len(synthetic):,}")
