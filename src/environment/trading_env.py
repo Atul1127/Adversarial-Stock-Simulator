@@ -85,8 +85,6 @@ class TradingEnv(gym.Env):
         previous_position = self.position
         self.position = target_position
 
-        # The log-return feature is converted back to a simple return for
-        # portfolio accounting. The action at t is applied to t -> t+1.
         log_return = float(self.data.iloc[self.current_step + 1]["return"])
         market_return = float(np.expm1(log_return))
         turnover = abs(self.position - previous_position)
@@ -110,6 +108,7 @@ class TradingEnv(gym.Env):
             "portfolio_value": self.portfolio_value,
             "position": self.position,
             "market_return": market_return,
+            "portfolio_return": portfolio_return,
             "trading_cost": trading_cost,
         }
 
