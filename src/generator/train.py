@@ -9,13 +9,29 @@ from src.data.loader import (
     load_stock_data,
     train_test_split_time_series,
 )
-from src.generator.dataset import create_sequences, normalize_sequences
+from src.generator.dataset import create_sequences, normalize_sequences, transform_features
 from src.generator.model import Discriminator, Generator
 
 
 SEED = 42
 FEATURE_COLUMNS = ["return", "volume_change", "price_range"]
-MODEL_TRANSFORMS = {"price_range": "log1p"}
+MAX_NORMALIZED_VALUE = 3.0
+RECONSTRUCTION_WEIGHT = 5.0
+MOMENT_WEIGHT = 0.5
+
+
+def _rollout(generator, start_state, steps, noise_dim, device):
+    """Free-run an autoregressive trajectory from a starting state."""
+    current = start_state
+    hidden = None
+    outputs = []
+
+    for _ in range(steps):
+        noise = torch.randn(current.size(0), 1, noise_dim, device=device)
+        current, hidden = generator(current, noise, hidden)
+        outputs.append(current)
+
+    return torch.cat(outputs, dim=1)
 
 
 def train(
@@ -28,7 +44,7 @@ def train(
     train_ratio=0.8,
     seed=SEED,
 ):
-    """Train a multivariate market generator on the chronological train split."""
+    """Train a bounded autoregressive adversarial market generator."""
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -37,50 +53,52 @@ def train(
     df = create_features(load_stock_data(data_path))
     train_df, _ = train_test_split_time_series(df, train_ratio=train_ratio)
 
-    generator_data = train_df[FEATURE_COLUMNS].copy()
-    # Price range is strictly nonnegative; modeling log1p(range) keeps the
-    # generator unconstrained in normalized space while guaranteeing valid
-    # values after inverse transformation.
-    generator_data["price_range"] = np.log1p(generator_data["price_range"])
-
-    sequences = create_sequences(
-        generator_data,
+    raw_sequences = create_sequences(
+        train_df,
         sequence_length=sequence_length,
         feature_columns=FEATURE_COLUMNS,
     )
-    sequences, mean, std = normalize_sequences(sequences)
+    transformed = transform_features(raw_sequences, FEATURE_COLUMNS)
+    sequences, mean, std = normalize_sequences(transformed)
 
     dataset = TensorDataset(torch.tensor(sequences))
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        generator=torch.Generator().manual_seed(seed),
+    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     feature_dim = len(FEATURE_COLUMNS)
 
-    generator = Generator(noise_dim, hidden_dim, feature_dim).to(device)
+    generator = Generator(
+        noise_dim,
+        hidden_dim,
+        feature_dim,
+        MAX_NORMALIZED_VALUE,
+    ).to(device)
     discriminator = Discriminator(hidden_dim, feature_dim).to(device)
 
     g_optimizer = torch.optim.Adam(generator.parameters(), lr=2e-4)
     d_optimizer = torch.optim.Adam(discriminator.parameters(), lr=2e-4)
     criterion = torch.nn.BCEWithLogitsLoss()
+    reconstruction = torch.nn.SmoothL1Loss()
 
     for epoch in range(epochs):
         for (real,) in loader:
             real = real.to(device)
-            batch_size_actual = real.size(0)
+            context = real[:, :1, :]
+            target = real[:, 1:, :]
+            steps = target.size(1)
 
-            noise = torch.randn(
-                batch_size_actual,
-                sequence_length,
-                noise_dim,
-                device=device,
-            )
-            fake = generator(noise)
+            fake = _rollout(generator, context, steps, noise_dim, device)
 
-            real_labels = torch.ones(batch_size_actual, 1, device=device)
-            fake_labels = torch.zeros(batch_size_actual, 1, device=device)
+            real_labels = torch.ones(real.size(0), 1, device=device)
+            fake_labels = torch.zeros(real.size(0), 1, device=device)
 
             d_loss = (
-                criterion(discriminator(real), real_labels)
+                criterion(discriminator(target), real_labels)
                 + criterion(discriminator(fake.detach()), fake_labels)
             ) / 2
 
@@ -88,14 +106,23 @@ def train(
             d_loss.backward()
             d_optimizer.step()
 
-            noise = torch.randn(
-                batch_size_actual,
-                sequence_length,
-                noise_dim,
-                device=device,
+            fake = _rollout(generator, context, steps, noise_dim, device)
+            g_adv = criterion(discriminator(fake), real_labels)
+            g_recon = reconstruction(fake, target)
+
+            fake_mean = fake.mean(dim=(0, 1))
+            target_mean = target.mean(dim=(0, 1))
+            fake_std = fake.std(dim=(0, 1))
+            target_std = target.std(dim=(0, 1))
+            g_moment = torch.mean((fake_mean - target_mean) ** 2) + torch.mean(
+                (fake_std - target_std) ** 2
             )
-            fake = generator(noise)
-            g_loss = criterion(discriminator(fake), real_labels)
+
+            g_loss = (
+                g_adv
+                + RECONSTRUCTION_WEIGHT * g_recon
+                + MOMENT_WEIGHT * g_moment
+            )
 
             g_optimizer.zero_grad()
             g_loss.backward()
@@ -105,8 +132,11 @@ def train(
             print(
                 f"Epoch {epoch + 1}/{epochs} | "
                 f"D Loss: {d_loss.item():.4f} | "
-                f"G Loss: {g_loss.item():.4f}"
+                f"G Loss: {g_loss.item():.4f} | "
+                f"Recon: {g_recon.item():.4f}"
             )
+
+    initial_states = sequences[: min(128, len(sequences)), 0, :]
 
     Path("models").mkdir(exist_ok=True)
     torch.save(
@@ -117,11 +147,13 @@ def train(
             "sequence_length": sequence_length,
             "output_dim": feature_dim,
             "feature_columns": FEATURE_COLUMNS,
-            "transforms": MODEL_TRANSFORMS,
             "mean": mean,
             "std": std,
             "train_ratio": train_ratio,
             "seed": seed,
+            "initial_states": initial_states,
+            "max_normalized_value": MAX_NORMALIZED_VALUE,
+            "feature_transform": "signed_log1p_volume_log1p_range_v1",
         },
         "models/market_generator.pt",
     )
