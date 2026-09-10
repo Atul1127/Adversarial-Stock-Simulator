@@ -27,6 +27,13 @@ def generate_synthetic_dataframe(
             "`python -m src.generator.train` before training PPO."
         )
 
+    transforms = checkpoint.get("transforms", {})
+    if transforms.get("price_range") != "log1p":
+        raise ValueError(
+            "Incompatible generator checkpoint transform metadata. Retrain "
+            "the generator with `python -m src.generator.train`."
+        )
+
     feature_dim = checkpoint.get("output_dim", len(feature_columns))
     if feature_dim != len(feature_columns):
         raise ValueError("Generator checkpoint feature dimension is inconsistent.")
@@ -64,6 +71,8 @@ def generate_synthetic_dataframe(
         synthetic,
         columns=feature_columns,
     )
+    synthetic_df["price_range"] = np.expm1(synthetic_df["price_range"])
+    synthetic_df["price_range"] = synthetic_df["price_range"].clip(lower=0.0)
 
     synthetic_df["volatility_20"] = (
         synthetic_df["return"]
