@@ -55,7 +55,7 @@ Historical OHLCV data is downloaded with Yahoo Finance and transformed into mode
 
 ### 2. Synthetic Market Generation
 
-An LSTM generator learns return-sequence structure from historical data while an LSTM discriminator distinguishes real and generated sequences.
+An LSTM generator learns return-sequence structure from the **chronological training split only**, while an LSTM discriminator distinguishes real and generated sequences.
 
 Synthetic sequences are validated using:
 
@@ -63,6 +63,8 @@ Synthetic sequences are validated using:
 - Volatility
 - Tail behavior
 - Autocorrelation
+
+For PPO augmentation, synthetic returns are generated as **one continuous LSTM trajectory** rather than flattening independently generated sequences, avoiding artificial transitions between unrelated samples.
 
 ### 3. Reinforcement Learning
 
@@ -85,10 +87,14 @@ The trained agents are evaluated under controlled market shocks:
 | Scenario | Description |
 | --- | --- |
 | Real | Held-out historical market conditions |
-| Volatility | 3× return-volatility shock |
+| Volatility | 3× amplification of return deviations around the sample mean |
 | Drawdown | Controlled sustained negative shock |
-| Crash | Concentrated severe decline |
-| Correlation | 1.5× amplified market movement |
+| Crash | Concentrated severe negative shock |
+| Market amplification | 1.5× amplification of return deviations around the sample mean |
+
+Because this repository currently uses a single asset, the final scenario is explicitly treated as **market-movement amplification rather than a literal correlation shock**. A true correlation test requires multiple assets.
+
+All final model comparisons and stress tests use the same unseen 20% historical test period.
 
 ### 5. Experimental Comparison
 
@@ -99,30 +105,6 @@ Three PPO training strategies are compared:
 3. **Real + synthetic PPO** — trained on the real training split plus synthetic sequences.
 
 All three models are evaluated on the same unseen 20% real-data test period and its controlled stress scenarios.
-
-## Verified Out-of-Sample Results
-
-The following results were generated from the corrected pipeline using the held-out 20% AAPL test period. Metrics are shown as decimals in the experiment output; returns and drawdowns below are converted to percentages for readability.
-
-### Normal Test Period
-
-| Model | Return | Sharpe | Sortino | Max Drawdown |
-| --- | ---: | ---: | ---: | ---: |
-| Real PPO | **36.03%** | **0.542** | **0.708** | -33.43% |
-| Combined PPO | 3.43% | 0.153 | 0.136 | **-14.57%** |
-| Synthetic PPO | -4.21% | -0.406 | -0.384 | -9.26% |
-
-### Stress-Test Highlights
-
-| Model | Scenario | Return | Sharpe | Max Drawdown |
-| --- | --- | ---: | ---: | ---: |
-| Real PPO | Volatility | 152.22% | 0.543 | -70.50% |
-| Real PPO | Crash | 15.92% | 0.256 | -35.39% |
-| Combined PPO | Volatility | 1.70% | 0.013 | -64.79% |
-| Combined PPO | Crash | 11.65% | 0.490 | **-14.57%** |
-| Synthetic PPO | Crash | -1.36% | -0.128 | -9.26% |
-
-**Interpretation:** the real-only PPO produced the strongest normal-period return, while the combined model showed substantially lower crash drawdown at the cost of lower normal-period performance. Synthetic-only PPO underperformed on the held-out real market. These results support a robustness trade-off rather than a claim that synthetic augmentation universally improves returns.
 
 ## Evaluation Metrics
 
@@ -138,7 +120,7 @@ The following results were generated from the corrected pipeline using the held-
 - Value at Risk (VaR)
 - Conditional Value at Risk (CVaR)
 
-The comparison is designed to measure both **performance** and **degradation under stress**, rather than relying on return alone.
+Financial metrics are computed from **actual portfolio-period returns**, while the RL reward remains an optimization signal for PPO.
 
 ## Project Structure
 
@@ -230,6 +212,8 @@ The default configuration downloads 10 years of AAPL data into `data/raw/`.
 python -m src.generator.train
 ```
 
+The generator is trained only on the chronological training split.
+
 ### 3. Validate generated sequences
 
 ```bash
@@ -244,16 +228,16 @@ python -m src.agent.train_synthetic
 python -m src.agent.train_combined
 ```
 
-### 5. Evaluate robustness
-
-```bash
-python -m src.evaluation.robustness
-```
-
-### 6. Compare all training strategies
+### 5. Compare all training strategies
 
 ```bash
 python -m src.evaluation.compare_models
+```
+
+### 6. Evaluate robustness
+
+```bash
+python -m src.evaluation.robustness
 ```
 
 Generated comparison outputs are written to `results/` and are intentionally ignored by Git.
@@ -296,7 +280,8 @@ This is an experimental research and portfolio project rather than a production 
 - Single-asset experiments
 - Simplified market microstructure
 - Synthetic returns rather than full OHLCV generation
-- Controlled adversarial scenarios rather than learned attacks
+- Controlled stress scenarios rather than learned attacks
+- Single-asset stress testing cannot measure true cross-asset correlation
 - No live trading or execution infrastructure
 - Limited historical universe
 
@@ -309,6 +294,7 @@ This is an experimental research and portfolio project rather than a production 
 - Walk-forward evaluation
 - Hyperparameter optimization
 - More realistic transaction and slippage models
+- Genuine cross-asset correlation stress testing
 
 ## Disclaimer
 
