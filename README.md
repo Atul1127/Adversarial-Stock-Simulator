@@ -72,6 +72,8 @@ All variants use the same 30-step episodic training setup and seed:
 
 No real→synthetic or synthetic→real transition is introduced inside an episode.
 
+The trading observation contains the four market features, current position, and current portfolio drawdown. The reward is portfolio log-return minus a small drawdown penalty, keeping the objective simple while discouraging excessive risk.
+
 ## Baseline
 
 The final comparison includes an unlevered **buy-and-hold AAPL benchmark** so PPO performance is not interpreted in isolation.
