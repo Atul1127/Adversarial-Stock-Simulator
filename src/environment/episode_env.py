@@ -5,13 +5,33 @@ import pandas as pd
 from src.environment.trading_env import TradingEnv
 
 
+def make_rolling_episodes(
+    data: pd.DataFrame,
+    episode_length: int = 30,
+    stride: int = 1,
+) -> list[pd.DataFrame]:
+    """Create chronological rolling windows for episodic RL training."""
+    if episode_length <= 1:
+        raise ValueError("episode_length must be greater than one.")
+    if stride <= 0:
+        raise ValueError("stride must be positive.")
+
+    data = data.reset_index(drop=True).copy()
+    if len(data) < episode_length:
+        raise ValueError("Data is shorter than the requested episode length.")
+
+    return [
+        data.iloc[start : start + episode_length].reset_index(drop=True).copy()
+        for start in range(0, len(data) - episode_length + 1, stride)
+    ]
+
+
 class RandomEpisodeEnv(gym.Env):
     """Sample a complete market trajectory independently on every reset.
 
-    This is used for synthetic training so PPO never learns from a transition
-    between two unrelated generated trajectories. Optional weights allow the
-    combined experiment to control how often real and synthetic episodes are
-    sampled.
+    Episodes are kept independent so PPO never learns a transition between
+    unrelated real/synthetic trajectories. Optional weights control source
+    sampling in the combined experiment.
     """
 
     metadata = {"render_modes": []}
@@ -26,9 +46,7 @@ class RandomEpisodeEnv(gym.Env):
         super().__init__()
         if not episodes:
             raise ValueError("episodes must contain at least one trajectory.")
-
-        lengths = [len(episode) for episode in episodes]
-        if any(length < 2 for length in lengths):
+        if any(len(episode) < 2 for episode in episodes):
             raise ValueError("Every episode must contain at least two rows.")
 
         if weights is None:
@@ -40,10 +58,8 @@ class RandomEpisodeEnv(gym.Env):
             if np.any(weights_array < 0) or weights_array.sum() <= 0:
                 raise ValueError("weights must be non-negative and not all zero.")
 
-        weights_array /= weights_array.sum()
-
         self.episodes = [episode.reset_index(drop=True).copy() for episode in episodes]
-        self.weights = weights_array
+        self.weights = weights_array / weights_array.sum()
         self.initial_cash = float(initial_cash)
         self.transaction_cost = float(transaction_cost)
         self._episode_rng = np.random.default_rng()
@@ -62,12 +78,7 @@ class RandomEpisodeEnv(gym.Env):
         if seed is not None:
             self._episode_rng = np.random.default_rng(seed)
 
-        index = int(
-            self._episode_rng.choice(
-                len(self.episodes),
-                p=self.weights,
-            )
-        )
+        index = int(self._episode_rng.choice(len(self.episodes), p=self.weights))
         self._env = TradingEnv(
             self.episodes[index],
             initial_cash=self.initial_cash,
