@@ -27,8 +27,16 @@ def main():
         weights_only=False,
     )
 
-    feature_columns = checkpoint.get("feature_columns", FEATURE_COLUMNS)
-    feature_dim = checkpoint.get("output_dim", len(feature_columns))
+    feature_columns = checkpoint.get("feature_columns")
+    if feature_columns != FEATURE_COLUMNS:
+        raise ValueError(
+            "Incompatible generator checkpoint. Retrain with "
+            "`python -m src.generator.train`."
+        )
+
+    feature_dim = checkpoint.get("output_dim")
+    if feature_dim != len(feature_columns):
+        raise ValueError("Generator checkpoint feature dimension is inconsistent.")
 
     model = Generator(
         checkpoint["noise_dim"],
@@ -73,8 +81,14 @@ def main():
         real_feature = real[:, idx]
         synthetic_feature = synthetic[:, idx]
         print(f"\n{feature}")
-        print(f"  Real mean/std:       {real_feature.mean(): .6f} / {real_feature.std(): .6f}")
-        print(f"  Synthetic mean/std:  {synthetic_feature.mean(): .6f} / {synthetic_feature.std(): .6f}")
+        print(
+            f"  Real mean/std:       {real_feature.mean(): .6f} / "
+            f"{real_feature.std(): .6f}"
+        )
+        print(
+            f"  Synthetic mean/std:  {synthetic_feature.mean(): .6f} / "
+            f"{synthetic_feature.std(): .6f}"
+        )
         for quantile in (0.01, 0.05, 0.95, 0.99):
             print(
                 f"  Q{quantile:.0%}: real {np.quantile(real_feature, quantile): .6f} | "
