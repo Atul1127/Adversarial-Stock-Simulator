@@ -12,23 +12,17 @@ REQUIRED_SYNTHETIC_FEATURES = ["return", "volume_change", "price_range"]
 EXPECTED_TRANSFORM = "signed_log1p_volume_log1p_range_v1"
 
 
-def generate_synthetic_dataframe(
-    checkpoint_path="models/market_generator.pt",
-    num_sequences=1000,
-    seed=42,
-):
-    """Generate one reproducible continuous autoregressive market trajectory."""
+def _load_generator(checkpoint_path):
     checkpoint = torch.load(
         checkpoint_path,
         map_location="cpu",
         weights_only=False,
     )
-
     feature_columns = checkpoint.get("feature_columns")
     if feature_columns != REQUIRED_SYNTHETIC_FEATURES:
         raise ValueError(
             "Incompatible generator checkpoint. Retrain the generator with "
-            "`python -m src.generator.train` before training PPO."
+            "`python -m src.generator.train`."
         )
     if checkpoint.get("feature_transform") != EXPECTED_TRANSFORM:
         raise ValueError(
@@ -48,27 +42,22 @@ def generate_synthetic_dataframe(
     )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
+    return checkpoint, model
 
-    total_steps = num_sequences * checkpoint["sequence_length"]
+
+def _generate_episode(checkpoint, model, rng, length):
+    feature_columns = checkpoint["feature_columns"]
+    feature_dim = len(feature_columns)
     initial_states = torch.as_tensor(
         checkpoint["initial_states"], dtype=torch.float32
     )
-    if initial_states.ndim != 2 or initial_states.shape[1] != feature_dim:
-        raise ValueError("Generator checkpoint initial states are invalid.")
-
-    torch.manual_seed(seed)
-    rng = torch.Generator(device="cpu")
-    rng.manual_seed(seed)
-
-    start_index = int(
-        torch.randint(len(initial_states), (1,), generator=rng).item()
-    )
+    start_index = int(torch.randint(len(initial_states), (1,), generator=rng).item())
     current = initial_states[start_index].view(1, 1, feature_dim)
     hidden = None
     outputs = [current]
 
     with torch.no_grad():
-        for _ in range(total_steps - 1):
+        for _ in range(length - 1):
             noise = torch.randn(
                 1,
                 1,
@@ -78,22 +67,60 @@ def generate_synthetic_dataframe(
             current, _, _, hidden = model.step(current, noise, hidden)
             outputs.append(current)
 
-    synthetic = torch.cat(outputs, dim=1).squeeze(0).numpy()
-    synthetic = denormalize_sequences(
-        synthetic,
+    values = torch.cat(outputs, dim=1).squeeze(0).numpy()
+    values = denormalize_sequences(
+        values,
         np.asarray(checkpoint["mean"]),
         np.asarray(checkpoint["std"]),
     )
-    synthetic = inverse_transform_features(synthetic, feature_columns)
+    values = inverse_transform_features(values, feature_columns)
 
-    synthetic_df = pd.DataFrame(synthetic, columns=feature_columns)
-    synthetic_df["volatility_20"] = (
-        synthetic_df["return"]
+    frame = pd.DataFrame(values, columns=feature_columns)
+    frame["volatility_20"] = (
+        frame["return"]
         .rolling(20, min_periods=1)
         .std()
         .fillna(0.0)
     )
+    return frame[["return", "volume_change", "volatility_20", "price_range"]]
 
-    return synthetic_df[
-        ["return", "volume_change", "volatility_20", "price_range"]
-    ].reset_index(drop=True)
+
+def generate_synthetic_episodes(
+    checkpoint_path="models/market_generator.pt",
+    num_episodes=512,
+    seed=42,
+):
+    """Generate independent synthetic market episodes matching training horizon."""
+    if num_episodes <= 0:
+        raise ValueError("num_episodes must be positive.")
+
+    checkpoint, model = _load_generator(checkpoint_path)
+    length = checkpoint["sequence_length"]
+    rng = torch.Generator(device="cpu")
+    rng.manual_seed(seed)
+
+    return [
+        _generate_episode(checkpoint, model, rng, length)
+        for _ in range(num_episodes)
+    ]
+
+
+def generate_synthetic_dataframe(
+    checkpoint_path="models/market_generator.pt",
+    num_sequences=1000,
+    seed=42,
+):
+    """Generate synthetic data as a compatibility view of independent episodes.
+
+    The returned frame contains an ``episode_id`` column. Training code should
+    prefer ``generate_synthetic_episodes`` so episode boundaries are explicit.
+    """
+    episodes = generate_synthetic_episodes(
+        checkpoint_path=checkpoint_path,
+        num_episodes=num_sequences,
+        seed=seed,
+    )
+    return pd.concat(
+        [episode.assign(episode_id=index) for index, episode in enumerate(episodes)],
+        ignore_index=True,
+    )
