@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -12,6 +13,9 @@ from src.generator.dataset import create_sequences, normalize_sequences
 from src.generator.model import Discriminator, Generator
 
 
+SEED = 42
+
+
 def train(
     data_path="data/raw/AAPL.csv",
     epochs=50,
@@ -20,12 +24,14 @@ def train(
     hidden_dim=64,
     sequence_length=30,
     train_ratio=0.8,
+    seed=SEED,
 ):
-    """Train the market generator using only the chronological training split.
+    """Train the market generator using only the chronological training split."""
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
-    The held-out test period is intentionally excluded from generator training
-    to prevent future-data leakage into downstream PPO experiments.
-    """
     df = create_features(load_stock_data(data_path))
     train_df, _ = train_test_split_time_series(df, train_ratio=train_ratio)
 
@@ -99,6 +105,7 @@ def train(
             "mean": mean,
             "std": std,
             "train_ratio": train_ratio,
+            "seed": seed,
         },
         "models/market_generator.pt",
     )
