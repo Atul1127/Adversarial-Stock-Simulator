@@ -6,7 +6,11 @@ from src.data.loader import (
     load_stock_data,
     train_test_split_time_series,
 )
-from src.generator.dataset import denormalize_sequences, inverse_transform_features, transform_features
+from src.generator.dataset import (
+    denormalize_sequences,
+    inverse_transform_features,
+    transform_features,
+)
 from src.generator.model import Generator
 
 
@@ -60,18 +64,11 @@ def main():
         train_ratio=checkpoint.get("train_ratio", 0.8),
     )
 
-    real = train_df[feature_columns].to_numpy(dtype=np.float32)
-    transformed_real = transform_features(real, feature_columns)
-    normalized_real, _, _ = denormalize_sequences(
-        transformed_real,
-        np.asarray(checkpoint["mean"]),
-        np.asarray(checkpoint["std"]),
-    ), None, None
-    del normalized_real  # transform_real is only used to document the training space.
-
+    real = train_df[feature_columns].to_numpy(dtype=np.float64)
     initial_states = torch.as_tensor(checkpoint["initial_states"], dtype=torch.float32)
     rng = torch.Generator(device="cpu")
     rng.manual_seed(checkpoint.get("seed", 42))
+
     start_index = int(torch.randint(len(initial_states), (1,), generator=rng).item())
     current = initial_states[start_index].view(1, 1, feature_dim)
     hidden = None
@@ -96,7 +93,6 @@ def main():
     )
     synthetic = inverse_transform_features(synthetic, feature_columns).astype(np.float64)
 
-    real = real.astype(np.float64)
     print("=" * 70)
     print("MARKET GENERATOR VALIDATION — TRAIN DISTRIBUTION")
     print("=" * 70)
@@ -133,21 +129,25 @@ def main():
         f"{synthetic_extreme_rate:.2%}"
     )
 
-    # A generator is considered usable only when it remains in a plausible
-    # distributional range; these checks prevent training PPO on collapsed data.
     return_mean_ratio = abs(synthetic_returns.mean() - real_returns.mean()) / max(
         real_returns.std(), 1e-8
     )
     return_std_ratio = synthetic_returns.std() / max(real_returns.std(), 1e-8)
+
+    print("\nValidation gates")
+    print(f"  Mean offset (real std units): {return_mean_ratio:.3f}")
+    print(f"  Volatility ratio:              {return_std_ratio:.3f}")
+    print(f"  Extreme-return rate:           {synthetic_extreme_rate:.2%}")
+
     if return_mean_ratio > 2.0 or not 0.25 <= return_std_ratio <= 2.0:
         raise RuntimeError(
-            "Synthetic return distribution failed validation. "
+            "Synthetic return distribution failed validation: "
             f"mean_offset_z={return_mean_ratio:.3f}, std_ratio={return_std_ratio:.3f}."
         )
     if synthetic_extreme_rate > 0.25:
         raise RuntimeError(
             "Synthetic tail frequency failed validation: "
-            f"{synthetic_extreme_rate:.2%} above the real 95th-percentile threshold."
+            f"{synthetic_extreme_rate:.2%} exceeds the allowed 25%."
         )
 
     print(f"\nValidated trajectory length: {len(synthetic):,}")
