@@ -5,11 +5,10 @@ from gymnasium import spaces
 
 
 class TradingEnv(gym.Env):
-    """Single-asset trading environment with continuous long/short exposure.
+    """Simple single-asset trading environment with mild risk awareness.
 
-    The action selected from observation t is applied to the return realized
-    from t to t+1. Portfolio wealth uses simple returns, preventing artificial
-    exponential amplification from repeatedly exponentiating log returns.
+    The action chosen from observation t is applied to the return realized
+    from t to t+1. Portfolio wealth uses simple returns.
 
     Action:
         -1.0 = fully short
@@ -17,10 +16,14 @@ class TradingEnv(gym.Env):
         +1.0 = fully long
 
     Observation:
-        four market features + current portfolio position
+        four market features + current position + current drawdown
+
+    Reward:
+        log portfolio return minus a small current-drawdown penalty.
     """
 
     metadata = {"render_modes": []}
+    DRAWDOWN_PENALTY = 0.02
 
     def __init__(
         self,
@@ -58,22 +61,31 @@ class TradingEnv(gym.Env):
         )
 
         self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(len(self.features) + 1,),
+            low=np.full(len(self.features) + 2, -np.inf, dtype=np.float32),
+            high=np.full(len(self.features) + 2, np.inf, dtype=np.float32),
             dtype=np.float32,
         )
 
     def _get_observation(self):
         row = self.data.iloc[self.current_step]
         values = row[self.features].to_numpy(dtype=np.float32)
-        return np.append(values, np.float32(self.position))
+        return np.concatenate(
+            [
+                values,
+                np.array(
+                    [self.position, self.current_drawdown],
+                    dtype=np.float32,
+                ),
+            ]
+        )
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.current_step = 0
         self.position = 0.0
         self.portfolio_value = self.initial_cash
+        self.peak_portfolio_value = self.initial_cash
+        self.current_drawdown = 0.0
         return self._get_observation(), {}
 
     def step(self, action):
@@ -92,8 +104,21 @@ class TradingEnv(gym.Env):
 
         portfolio_return = self.position * market_return - trading_cost
         portfolio_return = max(portfolio_return, -0.999)
-        reward = float(np.log1p(portfolio_return))
         self.portfolio_value *= 1.0 + portfolio_return
+
+        self.peak_portfolio_value = max(
+            self.peak_portfolio_value,
+            self.portfolio_value,
+        )
+        self.current_drawdown = max(
+            0.0,
+            1.0 - self.portfolio_value / self.peak_portfolio_value,
+        )
+
+        reward = float(
+            np.log1p(portfolio_return)
+            - self.DRAWDOWN_PENALTY * self.current_drawdown
+        )
 
         self.current_step += 1
         terminated = self.current_step >= len(self.data) - 1
@@ -110,6 +135,7 @@ class TradingEnv(gym.Env):
             "market_return": market_return,
             "portfolio_return": portfolio_return,
             "trading_cost": trading_cost,
+            "drawdown": self.current_drawdown,
         }
 
         return observation, reward, terminated, truncated, info
