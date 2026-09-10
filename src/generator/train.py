@@ -14,6 +14,7 @@ from src.generator.model import Discriminator, Generator
 
 
 SEED = 42
+FEATURE_COLUMNS = ["return", "volume_change", "price_range"]
 
 
 def train(
@@ -26,7 +27,7 @@ def train(
     train_ratio=0.8,
     seed=SEED,
 ):
-    """Train the market generator using only the chronological training split."""
+    """Train a multivariate market generator on the chronological train split."""
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -35,16 +36,21 @@ def train(
     df = create_features(load_stock_data(data_path))
     train_df, _ = train_test_split_time_series(df, train_ratio=train_ratio)
 
-    sequences = create_sequences(train_df, sequence_length)
+    sequences = create_sequences(
+        train_df,
+        sequence_length=sequence_length,
+        feature_columns=FEATURE_COLUMNS,
+    )
     sequences, mean, std = normalize_sequences(sequences)
 
     dataset = TensorDataset(torch.tensor(sequences))
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    feature_dim = len(FEATURE_COLUMNS)
 
-    generator = Generator(noise_dim, hidden_dim).to(device)
-    discriminator = Discriminator(hidden_dim).to(device)
+    generator = Generator(noise_dim, hidden_dim, feature_dim).to(device)
+    discriminator = Discriminator(hidden_dim, feature_dim).to(device)
 
     g_optimizer = torch.optim.Adam(generator.parameters(), lr=2e-4)
     d_optimizer = torch.optim.Adam(discriminator.parameters(), lr=2e-4)
@@ -102,6 +108,8 @@ def train(
             "noise_dim": noise_dim,
             "hidden_dim": hidden_dim,
             "sequence_length": sequence_length,
+            "output_dim": feature_dim,
+            "feature_columns": FEATURE_COLUMNS,
             "mean": mean,
             "std": std,
             "train_ratio": train_ratio,
