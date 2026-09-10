@@ -4,7 +4,14 @@ data:
   sequence_length: 30
   train_ratio: 0.8
 
+reproducibility:
+  seed: 42
+
 generator:
+  feature_columns:
+    - return
+    - volume_change
+    - price_range
   noise_dim: 16
   hidden_dim: 64
   epochs: 50
