@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 from stable_baselines3 import PPO
 
@@ -11,6 +13,7 @@ from src.evaluation.robustness import evaluate
 
 
 DATA_PATH = "data/raw/AAPL.csv"
+OUTPUT_PATH = Path("results/model_comparison.csv")
 
 
 def main():
@@ -44,7 +47,9 @@ def main():
             })
 
     results_df = pd.DataFrame(results)
-    results_df.to_csv("results/model_comparison.csv", index=False)
+
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    results_df.to_csv(OUTPUT_PATH, index=False)
 
     print("\n" + "=" * 100)
     print("FINAL MODEL COMPARISON — OUT-OF-SAMPLE")
@@ -55,7 +60,7 @@ def main():
             float_format=lambda x: f"{x:.4f}",
         )
     )
-    print("\nSaved: results/model_comparison.csv")
+    print(f"\nSaved: {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":
