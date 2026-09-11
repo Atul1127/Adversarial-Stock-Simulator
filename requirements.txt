@@ -1,8 +1,8 @@
-numpy
 pandas
+numpy
+tqdm
+torch
+matplotlib
+seaborn
 scikit-learn
 yfinance
-torch
-gymnasium
-stable-baselines3
-pytest
